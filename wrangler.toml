@@ -1,0 +1,31 @@
+name = "aliexpress-scraper-cloudflare"
+main = "src/index.ts"
+compatibility_date = "2026-08-17"
+compatibility_flags = ["nodejs_compat"]
+
+# Publish the Worker to your workers.dev subdomain by default.
+workers_dev = true
+
+# ============================================================================
+# Bindings are configured through the Cloudflare Dashboard or via
+# `wrangler secret put <NAME>`. Nothing sensitive is hardcoded here.
+#
+# Local development secrets live in `.dev.vars` (see `.dev.vars.example`),
+# which is git-ignored. In production use `wrangler secret put` or Dashboard
+# "Settings > Variables and Secrets".
+# ============================================================================
+
+# --- Plain (non-secret) variables -------------------------------------------
+# [vars]
+# SUPABASE_URL = "https://<project-ref>.supabase.co"
+
+# --- Secrets (set via `wrangler secret put SUPABASE_SERVICE_ROLE_KEY`) -------
+# SUPABASE_SERVICE_ROLE_KEY = ""
+
+# --- Optional KV namespace for caching scraped results -----------------------
+# [kv_namespaces]
+# SCRAPE_CACHE = { id = "<namespace-id>" }
+
+# --- Optional R2 bucket for storing assets / raw HTML ------------------------
+# [r2_buckets]
+# SCRAPE_ASSETS = { bucket_name = "scraping-assets" }
