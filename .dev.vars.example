@@ -1,5 +1,10 @@
 # Copy this file to `.dev.vars` for local development with `wrangler dev`.
 # Never commit the real `.dev.vars` file.
+#
+# These match the secret names declared in `wrangler.toml` under `[secrets]`.
+# For the deployed Worker, set them via:
+#   npx wrangler secret put SUPABASE_URL
+#   npx wrangler secret put SUPABASE_SECRET_KEY
 
 SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_SECRET_KEY=<your-secret-key>

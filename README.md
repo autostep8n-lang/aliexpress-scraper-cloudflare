@@ -70,11 +70,21 @@ npm run deploy
 
 ## Configuration & Secrets
 
-No secrets are hardcoded anywhere. Bindings are declared in `wrangler.toml`
-(commented out) and configured through the Cloudflare Dashboard
+No secrets are hardcoded anywhere. The Worker requires two runtime secrets,
+`SUPABASE_URL` and `SUPABASE_SECRET_KEY`. Their names are declared in
+`wrangler.toml` under `[secrets]` (with `keep_vars = true`), which makes
+Wrangler treat this config as the source of truth:
+
+- `wrangler deploy` **fails fast** if either required secret is missing from
+  the Worker instead of silently deploying without them.
+- `keep_vars = true` prevents Wrangler from overriding environment variables
+  configured in the Cloudflare dashboard on the next deploy.
+
+Configure the actual values (never committed) through the Cloudflare Dashboard
 (**Settings > Variables and Secrets**) or:
 
 ```bash
+npx wrangler secret put SUPABASE_URL
 npx wrangler secret put SUPABASE_SECRET_KEY
 ```
 

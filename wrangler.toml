@@ -7,20 +7,33 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
 # ============================================================================
-# Bindings are configured through the Cloudflare Dashboard or via
-# `wrangler secret put <NAME>`. Nothing sensitive is hardcoded here.
+# Bindings
+# ----------------------------------------------------------------------------
+# SUPABASE_URL and SUPABASE_SECRET_KEY are runtime secrets configured in the
+# Cloudflare dashboard ("Settings > Variables and Secrets") or via
+# `wrangler secret put`. The actual values are NEVER stored in this file.
 #
-# Local development secrets live in `.dev.vars` (see `.dev.vars.example`),
-# which is git-ignored. In production use `wrangler secret put` or Dashboard
-# "Settings > Variables and Secrets".
+# `keep_vars = true` is required here: without it, Wrangler treats this config
+# file as the source of truth for environment variables and OVERRIDES any
+# variables configured in the Cloudflare dashboard on the next deploy. Because
+# the Supabase bindings were previously not declared here (and keep_vars was
+# unset), each `wrangler deploy` removed them from the deployed Worker, so the
+# runtime saw no SUPABASE_URL / SUPABASE_SECRET_KEY and /health/supabase
+# reported "supabase not configured".
+#
+# The `[secrets]` section declares the secret names the Worker requires.
+# `wrangler deploy` validates that all of these exist on the Worker and fails
+# fast with a clear error if any are missing, so a broken deployment cannot be
+# silently pushed. Values still come from Cloudflare / `wrangler secret put`:
+#
+#   npx wrangler secret put SUPABASE_URL
+#   npx wrangler secret put SUPABASE_SECRET_KEY
 # ============================================================================
 
-# --- Plain (non-secret) variables -------------------------------------------
-# [vars]
-# SUPABASE_URL = "https://<project-ref>.supabase.co"
+keep_vars = true
 
-# --- Secrets (set via `wrangler secret put SUPABASE_SECRET_KEY`) -----------
-# SUPABASE_SECRET_KEY = ""
+[secrets]
+required = [ "SUPABASE_URL", "SUPABASE_SECRET_KEY" ]
 
 # --- Optional KV namespace for caching scraped results -----------------------
 # [kv_namespaces]
