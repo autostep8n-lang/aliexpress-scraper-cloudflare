@@ -26,6 +26,7 @@ export function handleDashboard(url: URL): Response {
       <p>Cloudflare Worker foundation is running.</p>
       <ul>
         <li>Health check: <a href="${baseUrl}/health">/health</a></li>
+        <li>Supabase connection: <a href="${baseUrl}/health/supabase">/health/supabase</a></li>
         <li>Scraping API: <code>GET /api/scrape?url=&lt;product-url&gt;</code> (not implemented yet)</li>
       </ul>
     </main>

@@ -65,6 +65,7 @@ npm run deploy
 | ------ | ---------------- | ---------------------------------------------------- |
 | GET    | `/`              | Landing page                                         |
 | GET    | `/health`        | Health check (reports binding status, never values)  |
+| GET    | `/health/supabase` | Live Supabase connectivity check (never leaks keys) |
 | GET    | `/api/scrape?url=...` | Scraping API — returns 501 until scrapers land  |
 
 ## Configuration & Secrets
@@ -74,7 +75,7 @@ No secrets are hardcoded anywhere. Bindings are declared in `wrangler.toml`
 (**Settings > Variables and Secrets**) or:
 
 ```bash
-npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+npx wrangler secret put SUPABASE_SECRET_KEY
 ```
 
 For local development, copy `.dev.vars.example` to `.dev.vars` and fill in

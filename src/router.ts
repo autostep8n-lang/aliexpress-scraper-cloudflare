@@ -1,5 +1,5 @@
 import { handleDashboard } from "./dashboard";
-import { handleHealth } from "./health";
+import { handleHealth, handleSupabaseHealth } from "./health";
 import { findScraper } from "./scrapers/registry";
 import type { Env } from "./env";
 
@@ -16,6 +16,9 @@ export async function routeRequest(request: Request, env: Env, ctx: ExecutionCon
 
     case "/health":
       return handleHealth(env);
+
+    case "/health/supabase":
+      return handleSupabaseHealth(env);
 
     case "/api/scrape": {
       const target = url.searchParams.get("url");

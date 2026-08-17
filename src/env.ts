@@ -8,8 +8,8 @@
 export interface Env {
   /** Supabase project URL. Set via Dashboard / `[vars]` / `.dev.vars`. */
   SUPABASE_URL?: string;
-  /** Supabase service-role key. Set as a secret, never committed. */
-  SUPABASE_SERVICE_ROLE_KEY?: string;
+  /** Supabase secret (service-role) key. Set as a secret, never committed. */
+  SUPABASE_SECRET_KEY?: string;
   /** Optional KV namespace for caching scraped results. */
   SCRAPE_CACHE?: KVNamespace;
   /** Optional R2 bucket for storing raw assets. */

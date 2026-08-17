@@ -33,7 +33,7 @@ describe("router", () => {
   it("reports configured bindings on /health without leaking values", async () => {
     const res = await get("/health", {
       SUPABASE_URL: "https://example.supabase.co",
-      SUPABASE_SERVICE_ROLE_KEY: "secret-value",
+      SUPABASE_SECRET_KEY: "secret-value",
     } as Env);
     const text = await res.text();
     const body = JSON.parse(text) as { config: Record<string, boolean> };

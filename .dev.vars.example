@@ -2,4 +2,4 @@
 # Never commit the real `.dev.vars` file.
 
 SUPABASE_URL=https://<project-ref>.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key>
+SUPABASE_SECRET_KEY=<your-secret-key>

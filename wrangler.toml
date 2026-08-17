@@ -19,8 +19,8 @@ workers_dev = true
 # [vars]
 # SUPABASE_URL = "https://<project-ref>.supabase.co"
 
-# --- Secrets (set via `wrangler secret put SUPABASE_SERVICE_ROLE_KEY`) -------
-# SUPABASE_SERVICE_ROLE_KEY = ""
+# --- Secrets (set via `wrangler secret put SUPABASE_SECRET_KEY`) -----------
+# SUPABASE_SECRET_KEY = ""
 
 # --- Optional KV namespace for caching scraped results -----------------------
 # [kv_namespaces]
