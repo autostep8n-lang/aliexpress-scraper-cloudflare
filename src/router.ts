@@ -1,5 +1,6 @@
 import { handleDashboard } from "./dashboard";
 import { handleHealth, handleSupabaseHealth } from "./health";
+import { handleProductIngest } from "./api/products";
 import { findScraper } from "./scrapers/registry";
 import { jsonError, jsonOk, methodNotAllowed, notFound, notImplemented } from "./utils/http";
 import { parseHttpUrl } from "./utils/url";
@@ -84,6 +85,13 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
 
       const result = await scraper.scrape(parsed, env, ctx);
       return jsonOk(result);
+    }
+
+    case "/api/products": {
+      if (request.method !== "POST") {
+        return methodNotAllowed(["POST"], requestId);
+      }
+      return handleProductIngest(request, env, requestId);
     }
 
     default:
