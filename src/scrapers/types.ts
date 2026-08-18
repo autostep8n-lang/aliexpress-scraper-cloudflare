@@ -31,3 +31,18 @@ export interface ScraperModule {
   supports(url: URL): boolean;
   scrape(url: URL, env: Env, ctx: ExecutionContext): Promise<ScraperResult>;
 }
+
+/**
+ * Error thrown by a scraper module when the source could not be scraped or
+ * parsed. Carries a stable machine-readable `code` so callers can branch on
+ * the failure without parsing message text.
+ */
+export class ScraperError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ScraperError";
+  }
+}

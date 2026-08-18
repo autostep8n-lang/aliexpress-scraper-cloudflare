@@ -1,9 +1,8 @@
 import { handleDashboard } from "./dashboard";
 import { handleHealth, handleSupabaseHealth } from "./health";
 import { handleProductIngest } from "./api/products";
-import { findScraper } from "./scrapers/registry";
-import { jsonError, jsonOk, methodNotAllowed, notFound, notImplemented } from "./utils/http";
-import { parseHttpUrl } from "./utils/url";
+import { handleScrape } from "./api/scrape";
+import { jsonError, methodNotAllowed, notFound, notImplemented } from "./utils/http";
 import { createRequestId, logError, logRequest } from "./logging";
 import type { Env } from "./env";
 
@@ -67,24 +66,7 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
     case "/api/scrape": {
       const denied = guardGet(request, requestId);
       if (denied) return denied;
-
-      const target = url.searchParams.get("url");
-      if (!target) {
-        return jsonError(400, "Missing required 'url' query parameter", "MISSING_URL", requestId);
-      }
-
-      const parsed = parseHttpUrl(target);
-      if (!parsed) {
-        return jsonError(400, "Invalid 'url' query parameter", "INVALID_URL", requestId);
-      }
-
-      const scraper = findScraper(parsed);
-      if (!scraper) {
-        return jsonError(501, `No scraper registered for ${parsed.hostname} yet`, "NO_SCRAPER", requestId);
-      }
-
-      const result = await scraper.scrape(parsed, env, ctx);
-      return jsonOk(result);
+      return handleScrape(request, env, ctx, requestId);
     }
 
     case "/api/products": {
