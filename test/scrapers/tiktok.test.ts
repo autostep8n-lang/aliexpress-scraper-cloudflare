@@ -276,6 +276,81 @@ describe("tiktokScraper scrape", () => {
     await expect(tiktokScraper.scrape(productUrl, {} as Env, ctx)).rejects.toMatchObject({ code: "BLOCKED" });
   });
 
+  function browserEnv(quickAction: (action: string, options: unknown) => Promise<Response>): Env {
+    return { BROWSER: { quickAction } } as unknown as Env;
+  }
+
+  function contentResponse(result: string, finalUrl?: string): Response {
+    return new Response(
+      JSON.stringify({ success: true, result, meta: { status: 200, title: "x", ...(finalUrl ? { finalUrl } : {}) } }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }
+
+  it("recovers a BLOCKED page by rendering it with the BROWSER binding", async () => {
+    const quickAction = vi.fn(async (_action: string, _options: unknown) => contentResponse(productPageHtml(productItem())));
+    stubFetch(() => new Response("<html><body>Please verify you are human.</body></html>", { status: 200 }));
+
+    const result = await tiktokScraper.scrape(productUrl, browserEnv(quickAction), ctx);
+
+    expect(quickAction).toHaveBeenCalledTimes(1);
+    expect(quickAction).toHaveBeenCalledWith("content", expect.objectContaining({ url: productUrl.href }));
+    expect(result.title).toBe("Wireless Earbuds Pro");
+    expect(result.url).toBe(productUrl.href);
+    expect(result.data).toMatchObject({ externalId: "123456789", title: "Wireless Earbuds Pro" });
+  });
+
+  it("recovers a NO_PRODUCT_DATA shell page via the BROWSER binding", async () => {
+    const quickAction = vi.fn(async (_action: string, _options: unknown) => contentResponse(productPageHtml(productItem())));
+    stubFetch(() => new Response("<html><body>empty app shell</body></html>", { status: 200 }));
+
+    const result = await tiktokScraper.scrape(productUrl, browserEnv(quickAction), ctx);
+    expect(result.title).toBe("Wireless Earbuds Pro");
+  });
+
+  it("uses the browser final URL when the render resolves to a canonical product page", async () => {
+    const quickAction = vi.fn(async (_action: string, _options: unknown) =>
+      contentResponse(productPageHtml(productItem()), "https://www.tiktok.com/@shop/product/123456789"),
+    );
+    stubFetch(() => new Response("<html><body>verify you are a human</body></html>", { status: 200 }));
+
+    const result = await tiktokScraper.scrape(productUrl, browserEnv(quickAction), ctx);
+    expect(result.url).toBe("https://www.tiktok.com/@shop/product/123456789");
+  });
+
+  it("reports BLOCKED when the browser render also returns a challenge page", async () => {
+    const quickAction = vi.fn(async (_action: string, _options: unknown) =>
+      contentResponse("<html><body>Access denied, verify you are human</body></html>"),
+    );
+    stubFetch(() => new Response("<html><body>Captcha required.</body></html>", { status: 200 }));
+
+    await expect(tiktokScraper.scrape(productUrl, browserEnv(quickAction), ctx)).rejects.toMatchObject({
+      code: "BLOCKED",
+    });
+  });
+
+  it("reports BLOCKED when the browser quick action errors", async () => {
+    const quickAction = vi.fn(async (_action: string, _options: unknown) =>
+      new Response(JSON.stringify({ success: false, errors: [{ code: 1000, message: "boom" }] }), { status: 422 }),
+    );
+    stubFetch(() => new Response("<html><body>Captcha required.</body></html>", { status: 200 }));
+
+    await expect(tiktokScraper.scrape(productUrl, browserEnv(quickAction), ctx)).rejects.toMatchObject({
+      code: "BLOCKED",
+    });
+  });
+
+  it("reports BLOCKED when the browser quick action throws", async () => {
+    const quickAction = vi.fn(async () => {
+      throw new Error("The RPC receiver does not implement the method quickAction");
+    });
+    stubFetch(() => new Response("<html><body>Captcha required.</body></html>", { status: 200 }));
+
+    await expect(tiktokScraper.scrape(productUrl, browserEnv(quickAction), ctx)).rejects.toMatchObject({
+      code: "BLOCKED",
+    });
+  });
+
   it("reuses the SCRAPE_CACHE for repeat scrapes of the same page", async () => {
     const store = new Map<string, string>();
     const cache = {

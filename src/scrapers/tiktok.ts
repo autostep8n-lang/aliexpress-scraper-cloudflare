@@ -56,7 +56,7 @@ export const tiktokScraper: ScraperModule = {
       if (cached) return toResult(cached, url);
     }
 
-    const resolved = await fetchTiktokPage(url);
+    let resolved = await fetchTiktokPage(url);
     if (!isTiktokProductPath(resolved.url.pathname)) {
       throw new ScraperError(
         "NOT_PRODUCT_PAGE",
@@ -67,7 +67,27 @@ export const tiktokScraper: ScraperModule = {
     const cacheKey = cacheKeyFor(resolved.url.pathname);
     let raw = directCacheKey === cacheKey ? undefined : await readCache(env, cacheKey);
     if (!raw) {
-      const parsed = parseTiktokPage(resolved.html, resolved.url);
+      let parsed: TiktokParsedProduct;
+      try {
+        parsed = parseTiktokPage(resolved.html, resolved.url);
+      } catch (err) {
+        // TikTok's WAF serves datacenter-originated plain fetches a challenge
+        // page (BLOCKED) or a client-side-only shell (NO_PRODUCT_DATA). When
+        // the Cloudflare Browser Run binding is available, render the page in
+        // a real headless Chromium and re-parse the post-JS HTML.
+        if (!isBrowserRecoverable(err) || !env.BROWSER) {
+          throw err;
+        }
+        const rendered = await renderWithBrowser(env, resolved.url);
+        if (!isTiktokProductPath(rendered.url.pathname)) {
+          throw new ScraperError(
+            "NOT_PRODUCT_PAGE",
+            `browser-rendered page is not a TikTok Shop product page: ${rendered.url.href}`,
+          );
+        }
+        parsed = parseTiktokPage(rendered.html, rendered.url);
+        resolved = rendered;
+      }
       raw = buildRawPayload(parsed);
       await writeCache(env, ctx, cacheKey, raw);
     }
@@ -161,6 +181,77 @@ async function fetchTiktokPage(start: URL): Promise<ResolvedPage> {
 
 function isRedirectStatus(status: number): boolean {
   return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
+/** ScraperError codes that can be recovered from by rendering in a real browser. */
+function isBrowserRecoverable(err: unknown): boolean {
+  return err instanceof ScraperError && (err.code === "BLOCKED" || err.code === "NO_PRODUCT_DATA");
+}
+
+/** Minimal shape of the Browser Run `content` quick action JSON response. */
+interface BrowserRenderedContent {
+  success?: boolean;
+  result?: string;
+  meta?: {
+    finalUrl?: string;
+    status?: number;
+    title?: string;
+  };
+  errors?: Array<{ code?: number; message?: string }>;
+}
+
+/**
+ * Renders a product page in Cloudflare's headless Chromium (Browser Run
+ * `content` quick action) and returns the post-JavaScript HTML plus the final
+ * URL the browser resolved to. Throws a typed `BLOCKED` ScraperError when the
+ * render fails or returns nothing, preserving the existing error surface.
+ */
+async function renderWithBrowser(env: Env, url: URL): Promise<ResolvedPage> {
+  if (!env.BROWSER) {
+    throw new ScraperError(
+      "BLOCKED",
+      "TikTok served a verification or challenge page; no product data available",
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await env.BROWSER.quickAction("content", {
+      url: url.href,
+      userAgent: USER_AGENT,
+      setExtraHTTPHeaders: { "accept-language": "en-US,en;q=0.9" },
+      gotoOptions: { waitUntil: "networkidle2", timeout: 45000 },
+      bestAttempt: true,
+      cacheTTL: 0,
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new ScraperError(
+      "BLOCKED",
+      `TikTok served a verification or challenge page and browser rendering failed: ${detail}`,
+    );
+  }
+
+  const payload = (await response.json().catch(() => undefined)) as BrowserRenderedContent | undefined;
+  if (!payload || payload.success !== true || typeof payload.result !== "string" || payload.result.length === 0) {
+    throw new ScraperError(
+      "BLOCKED",
+      "TikTok served a verification or challenge page; browser rendering returned no product data",
+    );
+  }
+
+  let resolved = url;
+  const finalUrl = payload.meta?.finalUrl;
+  if (finalUrl) {
+    try {
+      const parsed = new URL(finalUrl);
+      if (isTiktokHost(parsed.hostname)) resolved = parsed;
+    } catch {
+      // Malformed final URL - keep the requested URL.
+    }
+  }
+
+  return { url: resolved, html: payload.result };
 }
 
 async function readCache(env: Env, key: string): Promise<Record<string, unknown> | undefined> {

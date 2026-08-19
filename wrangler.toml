@@ -42,3 +42,22 @@ required = [ "SUPABASE_URL", "SUPABASE_SECRET_KEY" ]
 # --- Optional R2 bucket for storing assets / raw HTML ------------------------
 # [r2_buckets]
 # SCRAPE_ASSETS = { bucket_name = "scraping-assets" }
+
+# --- Cloudflare Browser Run (Browser Rendering) binding ----------------------
+# Used by the TikTok Shop scraper to render product pages that TikTok answers
+# with a "Security Check" challenge page (or a client-side-only shell) when
+# fetched directly from Worker datacenter IPs. Runs a real headless Chromium
+# on Cloudflare's network: genuine browser TLS fingerprint + JavaScript
+# execution, so the SSR product data TikTok would otherwise withhold becomes
+# available to the existing parser.
+#
+# Requirements:
+#   - The account must have Browser Rendering / Browser Run enabled
+#     (Workers Paid). Workers Free is limited to 10 browser-minutes/day.
+#   - Quick Actions (`env.BROWSER.quickAction("content", ...)`) need a
+#     compatibility_date of 2026-03-24 or later (this project uses
+#     2026-08-17, so it is satisfied).
+#   - Local `wrangler dev` needs `--remote` (or `remote = true` here) for
+#     Quick Actions; unit tests mock the binding instead.
+[browser]
+binding = "BROWSER"
