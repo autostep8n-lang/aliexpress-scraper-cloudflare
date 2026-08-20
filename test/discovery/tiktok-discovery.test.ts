@@ -151,7 +151,8 @@ describe("tiktokDiscovery.discover", () => {
 
     await tiktokDiscovery.discover({ query: "earbuds", category: "c42", region: "GB", limit: 20 }, configuredEnv(), ctx);
 
-    expect(requestedUrl?.pathname).toBe("/search");
+    expect(requestedUrl?.hostname).toBe("www.tiktok.com");
+    expect(requestedUrl?.pathname).toBe("/search/shop");
     expect(requestedUrl?.searchParams.get("q")).toBe("earbuds");
     expect(requestedUrl?.searchParams.get("category_id")).toBe("c42");
     expect(requestedUrl?.searchParams.get("region")).toBe("GB");

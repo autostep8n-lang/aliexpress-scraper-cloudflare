@@ -73,7 +73,7 @@ export const tiktokDiscovery: DiscoveryModule = {
 };
 
 function buildSearchUrl(query: DiscoveryQuery): URL {
-  const url = new URL("https://shop.tiktok.com/search");
+  const url = new URL("https://www.tiktok.com/search/shop");
   if (query.query) url.searchParams.set("q", query.query);
   if (query.category) url.searchParams.set("category_id", query.category);
   if (query.region) url.searchParams.set("region", query.region);
