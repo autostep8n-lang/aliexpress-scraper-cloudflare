@@ -1,4 +1,5 @@
 import { handleDashboard } from "./dashboard";
+import { handleDiscover } from "./api/discover";
 import { handleHealth, handleSupabaseHealth } from "./health";
 import { handleProductIngest } from "./api/products";
 import { handleScrape } from "./api/scrape";
@@ -67,6 +68,12 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
       const denied = guardGet(request, requestId);
       if (denied) return denied;
       return handleScrape(request, env, ctx, requestId);
+    }
+
+    case "/api/discover": {
+      const denied = guardGet(request, requestId);
+      if (denied) return denied;
+      return handleDiscover(request, env, ctx, requestId);
     }
 
     case "/api/products": {

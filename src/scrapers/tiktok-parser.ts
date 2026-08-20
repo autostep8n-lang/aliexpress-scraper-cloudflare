@@ -90,7 +90,7 @@ export function looksBlocked(html: string): boolean {
   return BLOCKED_MARKERS.some((marker) => lowered.includes(marker));
 }
 
-function extractSsJson(html: string): unknown {
+export function extractSsJson(html: string): unknown {
   for (const candidate of collectJsonCandidates(html)) {
     try {
       const parsed = JSON.parse(candidate) as unknown;
@@ -151,14 +151,39 @@ function extractBalancedJson(source: string, startIndex: number): string | null 
   return null;
 }
 
+/** Minimum `itemScore` for an object to be treated as a product item. */
+const MIN_ITEM_SCORE = 4;
+
 /** Depth-first search for the object that looks most like a product item. */
 function findProductItem(root: unknown): ProductItemHit | undefined {
   const hits: ProductItemHit[] = [];
   walk(root, hits);
   hits.sort((a, b) => b.score - a.score);
   const best = hits[0];
-  if (!best || best.score < 4) return undefined;
+  if (!best || best.score < MIN_ITEM_SCORE) return undefined;
   return best;
+}
+
+/**
+ * Depth-first search for EVERY object that looks like a product item. Used by
+ * discovery (search/category pages) where a single page carries many products
+ * instead of one. Returns items sorted by confidence, deduplicated by object
+ * identity, and only those scoring at least `MIN_ITEM_SCORE`.
+ */
+export function findProductItems(root: unknown): Array<Record<string, unknown>> {
+  const hits: ProductItemHit[] = [];
+  walk(root, hits);
+  hits.sort((a, b) => b.score - a.score);
+
+  const items: Array<Record<string, unknown>> = [];
+  const seen = new Set<Record<string, unknown>>();
+  for (const hit of hits) {
+    if (hit.score < MIN_ITEM_SCORE) break;
+    if (seen.has(hit.item)) continue;
+    seen.add(hit.item);
+    items.push(hit.item);
+  }
+  return items;
 }
 
 function walk(node: unknown, out: ProductItemHit[]): void {
@@ -195,7 +220,7 @@ function hasString(record: Record<string, unknown>, ...keys: string[]): boolean 
   });
 }
 
-function mapItem(hit: ProductItemHit, url?: URL): TiktokParsedProduct {
+export function mapItem(hit: ProductItemHit, url?: URL): TiktokParsedProduct {
   const item = hit.item;
   const context = looksLikeProductContext(hit.parent) ? (hit.parent as Record<string, unknown>) : item;
 

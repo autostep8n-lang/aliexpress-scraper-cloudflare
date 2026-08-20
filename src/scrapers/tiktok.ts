@@ -35,7 +35,7 @@ function isShortLink(url: URL): boolean {
   return url.hostname.toLowerCase() === "vm.tiktok.com" || url.pathname.startsWith("/t/");
 }
 
-interface ResolvedPage {
+export interface ResolvedPage {
   url: URL;
   html: string;
 }
@@ -133,7 +133,7 @@ function buildRawPayload(parsed: TiktokParsedProduct): Record<string, unknown> {
   return raw;
 }
 
-async function fetchTiktokPage(start: URL): Promise<ResolvedPage> {
+export async function fetchTiktokPage(start: URL): Promise<ResolvedPage> {
   let current = start;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const response = await fetch(current.href, {
@@ -184,7 +184,7 @@ function isRedirectStatus(status: number): boolean {
 }
 
 /** ScraperError codes that can be recovered from by rendering in a real browser. */
-function isBrowserRecoverable(err: unknown): boolean {
+export function isBrowserRecoverable(err: unknown): boolean {
   return err instanceof ScraperError && (err.code === "BLOCKED" || err.code === "NO_PRODUCT_DATA");
 }
 
@@ -206,7 +206,7 @@ interface BrowserRenderedContent {
  * URL the browser resolved to. Throws a typed `BLOCKED` ScraperError when the
  * render fails or returns nothing, preserving the existing error surface.
  */
-async function renderWithBrowser(env: Env, url: URL): Promise<ResolvedPage> {
+export async function renderWithBrowser(env: Env, url: URL): Promise<ResolvedPage> {
   if (!env.BROWSER) {
     throw new ScraperError(
       "BLOCKED",
