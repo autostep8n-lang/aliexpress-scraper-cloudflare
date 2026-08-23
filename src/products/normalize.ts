@@ -111,13 +111,13 @@ function isSupportedPlatform(value: unknown): value is ScraperPlatform {
   return typeof value === "string" && (SUPPORTED_PLATFORMS as readonly string[]).includes(value);
 }
 
-function asString(value: unknown): string {
+export function asString(value: unknown): string {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number") return String(value);
   return "";
 }
 
-function toFiniteNumber(value: unknown): number | undefined {
+export function toFiniteNumber(value: unknown): number | undefined {
   if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
   if (typeof value === "string") {
     const cleaned = value.replace(/[^0-9.\-]/g, "");
@@ -171,7 +171,7 @@ function normalizeImages(value: unknown): ProductImage[] {
   return images;
 }
 
-function normalizeCategory(value: unknown): ProductCategory | undefined {
+export function normalizeCategory(value: unknown): ProductCategory | undefined {
   if (typeof value === "string") {
     const name = value.trim();
     return name ? { name } : undefined;
@@ -192,7 +192,7 @@ function normalizeCategory(value: unknown): ProductCategory | undefined {
   return category;
 }
 
-function normalizeRating(value: unknown): ProductRating | undefined {
+export function normalizeRating(value: unknown): ProductRating | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const record = value as Record<string, unknown>;
 
@@ -204,7 +204,7 @@ function normalizeRating(value: unknown): ProductRating | undefined {
   return Object.keys(rating).length > 0 ? rating : undefined;
 }
 
-function normalizeShipping(value: unknown): ProductShipping | undefined {
+export function normalizeShipping(value: unknown): ProductShipping | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const record = value as Record<string, unknown>;
 
@@ -225,7 +225,7 @@ function normalizeShipping(value: unknown): ProductShipping | undefined {
   return Object.keys(shipping).length > 0 ? shipping : undefined;
 }
 
-function normalizeAttributes(value: unknown): Record<string, string> | undefined {
+export function normalizeAttributes(value: unknown): Record<string, string> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const attributes: Record<string, string> = {};
   for (const [key, entry] of Object.entries(value)) {
@@ -234,7 +234,7 @@ function normalizeAttributes(value: unknown): Record<string, string> | undefined
   return Object.keys(attributes).length > 0 ? attributes : undefined;
 }
 
-function normalizeAvailability(value: unknown): boolean | undefined {
+export function normalizeAvailability(value: unknown): boolean | undefined {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") {
     const normalized = value.trim().toLowerCase();

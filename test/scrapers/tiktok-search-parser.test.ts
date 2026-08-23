@@ -53,7 +53,7 @@ function expectScraperErrorCode(fn: () => unknown, code: string): void {
 }
 
 describe("parseTiktokSearchPage", () => {
-  const searchUrl = new URL("https://shop.tiktok.com/search?q=earbuds");
+  const searchUrl = new URL("https://www.tiktok.com/search/shop?q=earbuds");
 
   it("extracts every product card into the discovery shape", () => {
     const page = parseTiktokSearchPage(searchPageHtml([searchItem("111"), searchItem("222"), searchItem("333")], 42), searchUrl);
