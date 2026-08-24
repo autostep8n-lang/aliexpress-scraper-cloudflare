@@ -28,7 +28,9 @@
   - Deterministic Amazon adapter + JSON-LD-first parser under `src/scrapers/amazon*.ts`; registered in `src/scrapers/registry.ts` and wired through `/api/scrape` (`amazon:<ASIN>` identity, redirect safety, cache, browser-recovery for blocked pages).
 - **P1.9 — AliExpress Production Scraper: DONE**
   - Cloudflare-native AliExpress adapter + layered parser (runParams / RDS / JSON-LD / HTML fallbacks) under `src/scrapers/aliexpress*.ts`; registered in `src/scrapers/registry.ts` and wired through `/api/scrape` (`aliexpress:<itemId>` identity, regional domain support, redirect safety, cache, browser-recovery for blocked pages).
-- **Next task: P1.10 — Competition / Opportunity Score**
+- **P1.10 — Competition / Opportunity Score: DONE**
+  - Deterministic competition and market opportunity scoring engine under `src/opportunity/` (competition pressure, demand and profit signals, `scores` row mapping).
+- **Next task: P3.1 — Google Trends**
 
 ## P0 — Foundation
 
@@ -50,7 +52,7 @@
 | 9 | Trend History Engine | DONE | Completed as P1.4; engine in `src/trends/` |
 | 10 | Product Lifecycle | DONE | Completed as P1.5; engine in `src/lifecycle/` |
 | 11 | Profit Engine | DONE | Completed as P1.6; deterministic engine in `src/profit/` |
-| 12 | Competition / Opportunity Score | NEXT | Not started |
+| 12 | Competition / Opportunity Score | DONE | Completed as P1.10; deterministic engine in `src/opportunity/` |
 
 ## P2 — Product Sources
 
@@ -121,7 +123,7 @@
 5. **P1.6 Profit Engine**
 6. **P1.8 Amazon Scraper**
 7. **P1.9 AliExpress Production Scraper**
-8. **P1.10 Competition / Opportunity Score** (NEXT)
+8. **P1.10 Competition / Opportunity Score**
 9. **P2 product sources**, continuing with other platforms; TikTok remains optional/non-blocking for SA.
 10. **P3 → P4 → P5 → P6 → P7 → P8** in sequence as the intelligence foundation becomes available.
 
