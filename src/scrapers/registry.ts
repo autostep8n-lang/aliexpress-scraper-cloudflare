@@ -1,3 +1,4 @@
+import { amazonScraper } from "./amazon";
 import { tiktokScraper } from "./tiktok";
 import type { ScraperModule } from "./types";
 
@@ -8,7 +9,7 @@ import type { ScraperModule } from "./types";
  *   import { aliexpressScraper } from "./aliexpress";
  *   registerScraper(aliexpressScraper);
  */
-export const scraperRegistry: ScraperModule[] = [tiktokScraper];
+export const scraperRegistry: ScraperModule[] = [tiktokScraper, amazonScraper];
 
 export function registerScraper(module: ScraperModule): void {
   scraperRegistry.push(module);

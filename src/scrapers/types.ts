@@ -2,8 +2,9 @@ import type { Env } from "../env";
 
 /**
  * Platforms that will be supported by scraper modules. Concrete modules
- * (AliExpress, TikTok Shop, Amazon, etc.) are intentionally NOT implemented
- * yet - this type is the contract they will implement.
+ * (TikTok Shop, Amazon) are implemented under `src/scrapers/`; the rest
+ * (AliExpress, YouTube, Instagram, etc.) still need to implement the contract
+ * below.
  */
 export type ScraperPlatform =
   | "aliexpress"
