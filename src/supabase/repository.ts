@@ -3,6 +3,14 @@ import type { Env } from "../env";
 import type { Product, ProductCategory } from "../products/types";
 import { validateProduct } from "../products/validation";
 import { getSupabaseClient } from "./client";
+import { longestToken } from "../matching/normalize";
+import { decideMerge, matchSignals, type MatchResult } from "../matching/match";
+import {
+  buildSignalsFromProduct,
+  buildSignalsFromRow,
+  deriveFingerprint,
+  type ProductSignals,
+} from "../matching/signals";
 
 /**
  * Typed outcome of a repository operation. Never throws: every failure path is
@@ -96,11 +104,12 @@ const OBSERVATION_SELECT =
  * Ingests one already-normalized Phase 1 `Product` into the P0.2 schema.
  *
  * Flow: validate -> ensure source (idempotent) -> best-effort category ->
- * upsert unified `products` row on `dedup_key` -> upsert `product_sources`
- * observation on `(source_id, external_id)`. A product is never duplicated:
- * the same dedup_key reuses the unified row and the same (source, external_id)
- * reuses the observation row. Per-platform data stays on `product_sources`;
- * the unified `products` row only carries cross-platform fields.
+ * matching/deduplication -> upsert unified `products` row on `dedup_key` ->
+ * upsert `product_sources` observation on `(source_id, external_id)`. A product
+ * is never duplicated: the same dedup_key reuses the unified row, a cross-source
+ * match reuses the matched product row, and the same (source, external_id)
+ * reuses the observation row. Per-platform data stays on `product_sources`; the
+ * unified `products` row only carries cross-platform fields.
  *
  * Supabase-js cannot run multi-statement transactions through PostgREST, so a
  * failure mid-flow leaves already-persisted steps in place and is reported as a
@@ -126,29 +135,114 @@ export async function upsertProduct(
     return { status: "error", code: source.code, message: source.message };
   }
 
-  const dedupKey = deriveDedupKey(product);
+  const signals = buildSignalsFromProduct(product);
+  const fingerprint = deriveFingerprint(signals.identifiers, signals.variantTokens);
+  const dedupKey = fingerprint ?? deriveDedupKey(product);
   const categoryId = await resolveCategoryId(client, source.data.id, product.category);
 
-  const productRow = buildProductRow(product, dedupKey, categoryId);
-  const productResult = await upsertProductRow(client, productRow);
-  if (productResult.status === "error") {
-    return { status: "error", code: productResult.code, message: productResult.message };
+  const match = await findBestMatch(client, signals, fingerprint);
+
+  let productId: string;
+  let productRecord: PersistedProductRecord;
+  if (match.matched) {
+    productId = match.row.id;
+    productRecord = match.row;
+    await touchProductRow(client, match.row.id, product.scrapedAt);
+  } else {
+    const productResult = await upsertProductRow(client, buildProductRow(product, dedupKey, categoryId));
+    if (productResult.status === "error") {
+      return { status: "error", code: productResult.code, message: productResult.message };
+    }
+    productId = productResult.data.id;
+    productRecord = productResult.data;
   }
 
-  const observationRow = buildObservationRow(product, source.data.id, productResult.data.id, categoryId, opts.raw);
+  const observationRow = buildObservationRow(product, source.data.id, productId, categoryId, opts.raw);
   const observationResult = await upsertObservationRow(client, observationRow);
   if (observationResult.status === "error") {
     return { status: "error", code: observationResult.code, message: observationResult.message };
   }
 
+  const status: "created" | "updated" = match.matched || !observationResult.created ? "updated" : "created";
   return {
-    status: observationResult.created ? "created" : "updated",
+    status,
     data: {
       source: source.data,
-      product: productResult.data,
+      product: productRecord,
       observation: observationResult.data,
     },
   };
+}
+
+/**
+ * Finds the canonical `products` row an incoming product should map to.
+ *
+ * Exact global identifiers (fingerprint stored on `dedup_key`) are resolved
+ * through the unique index; everything else is narrowed with a title trigram
+ * lookup (longest distinctive title token) so matching never scans the table.
+ * Matching failures are non-fatal: any error here falls back to "no match" so
+ * ingestion always proceeds.
+ */
+async function findBestMatch(
+  client: SupabaseClient,
+  signals: ProductSignals,
+  fingerprint: string | null,
+): Promise<{ matched: true; row: PersistedProductRecord } | { matched: false }> {
+  if (fingerprint) {
+    try {
+      const { data, error } = await client
+        .from("products")
+        .select(PRODUCT_SELECT)
+        .eq("dedup_key", fingerprint)
+        .maybeSingle();
+      if (!error && data) {
+        return { matched: true, row: data };
+      }
+    } catch {
+      // fall through to the fuzzy candidate search
+    }
+  }
+
+  const anchor = longestToken(signals.titleTokens, 4);
+  if (!anchor) return { matched: false };
+
+  let candidates: PersistedProductRecord[];
+  try {
+    const { data, error } = await client
+      .from("products")
+      .select(PRODUCT_SELECT)
+      .ilike("title", `%${anchor}%`)
+      .limit(25);
+    if (error || !Array.isArray(data)) return { matched: false };
+    candidates = data as PersistedProductRecord[];
+  } catch {
+    return { matched: false };
+  }
+
+  if (fingerprint) {
+    candidates = candidates.filter((row) => row.dedup_key !== fingerprint);
+  }
+
+  let best: { match: MatchResult; row: PersistedProductRecord } | null = null;
+  for (const row of candidates) {
+    const candidateSignals = buildSignalsFromRow(row);
+    const match = matchSignals(signals, candidateSignals);
+    if (match.blocked) continue;
+    if (!decideMerge(signals, match)) continue;
+    if (!best || match.score > best.match.score) best = { match, row };
+  }
+
+  if (best) return { matched: true, row: best.row };
+  return { matched: false };
+}
+
+/** Best-effort refresh of the matched product row's freshness marker. */
+async function touchProductRow(client: SupabaseClient, productId: string, lastSeenAt: string): Promise<void> {
+  try {
+    await client.from("products").update({ last_seen_at: lastSeenAt }).eq("id", productId).select("id");
+  } catch {
+    // non-fatal: the matched row already carries the canonical identity
+  }
 }
 
 /**

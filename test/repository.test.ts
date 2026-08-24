@@ -3,6 +3,7 @@ import type { Env } from "../src/env";
 import { getObservation, upsertProduct } from "../src/supabase/repository";
 import type { Product } from "../src/products/types";
 import { normalizeProduct } from "../src/products/normalize";
+import { computeGtinCheckDigit } from "../src/matching/normalize";
 import { createMockPostgrest, type MockPostgrest, type RecordedRequest } from "./helpers/postgrest-mock";
 
 const SUPABASE_URL = "https://example.supabase.co";
@@ -295,6 +296,204 @@ describe("upsertProduct", () => {
       expect(request.headers.get("Authorization")).toBe(`Bearer ${SECRET_KEY}`);
       expect(request.headers.get("apikey")).toBe(SECRET_KEY);
     }
+  });
+});
+
+describe("upsertProduct deduplication", () => {
+  let server: MockPostgrest;
+
+  function gtin(body: string): string {
+    return body + computeGtinCheckDigit(body);
+  }
+
+  const GTIN = gtin("123456789012");
+  const GTIN_FINGERPRINT = `gtin:${GTIN.padStart(14, "0")}`;
+
+  beforeEach(() => {
+    server = createMockPostgrest();
+    server.seed("sources", [SOURCE_ALIEXPRESS, SOURCE_AMAZON]);
+    vi.stubGlobal("fetch", server.fetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function gtinProduct(platform: "aliexpress" | "amazon", externalId: string, title: string, brand = "SoundCore"): Product {
+    return normalizeProduct({
+      raw: {
+        externalId,
+        title,
+        price: { amount: "19.99", currency: "usd" },
+        attributes: { brand, gtin: GTIN },
+      },
+      platform,
+      url: `https://www.example.com/${platform}/${externalId}`,
+      scrapedAt: "2026-08-18T10:00:00.000Z",
+    });
+  }
+
+  function noIdentifierProduct(platform: "aliexpress" | "amazon", externalId: string, title: string, brand: string): Product {
+    return normalizeProduct({
+      raw: {
+        externalId,
+        title,
+        price: { amount: "9.99", currency: "usd" },
+        attributes: { brand },
+      },
+      platform,
+      url: `https://www.example.com/${platform}/${externalId}`,
+      scrapedAt: "2026-08-18T10:00:00.000Z",
+    });
+  }
+
+  it("merges the same GTIN from two platforms into a single products row", async () => {
+    const ali = await upsertProduct(configuredEnv(), gtinProduct("aliexpress", "1005001", "SoundCore Wireless Earbuds"));
+    const amazon = await upsertProduct(
+      configuredEnv(),
+      gtinProduct("amazon", "B0XXXXX", "SoundCore Wireless Earbuds Pro"),
+    );
+
+    expect(ali.status).toBe("created");
+    expect(amazon.status).toBe("updated");
+    if (ali.status !== "created" || amazon.status !== "updated") return;
+
+    expect(server.store.products).toHaveLength(1);
+    expect(server.store.product_sources).toHaveLength(2);
+    expect(ali.data.product.dedup_key).toBe(GTIN_FINGERPRINT);
+    expect(amazon.data.product.id).toBe(ali.data.product.id);
+
+    const amazonObservation = server.store.product_sources.find((row) => row.external_id === "B0XXXXX");
+    expect(amazonObservation?.product_id).toBe(ali.data.product.id);
+  });
+
+  it("merges the same MPN from two platforms", async () => {
+    const ali = await upsertProduct(
+      configuredEnv(),
+      normalizeProduct({
+        raw: {
+          externalId: "1005001",
+          title: "Acme Widget 3000",
+          price: { amount: "19.99", currency: "usd" },
+          attributes: { brand: "Acme", mpn: "MPN-1234" },
+        },
+        platform: "aliexpress",
+        url: "https://www.example.com/aliexpress/1005001",
+        scrapedAt: "2026-08-18T10:00:00.000Z",
+      }),
+    );
+    const amazon = await upsertProduct(
+      configuredEnv(),
+      normalizeProduct({
+        raw: {
+          externalId: "B0XXXXX",
+          title: "Acme Widget 3000 Deluxe",
+          price: { amount: "24.99", currency: "usd" },
+          attributes: { brand: "Acme", mpn: "MPN-1234" },
+        },
+        platform: "amazon",
+        url: "https://www.example.com/amazon/B0XXXXX",
+        scrapedAt: "2026-08-18T10:00:00.000Z",
+      }),
+    );
+
+    expect(ali.status).toBe("created");
+    expect(amazon.status).toBe("updated");
+    if (ali.status !== "created" || amazon.status !== "updated") return;
+    expect(server.store.products).toHaveLength(1);
+    expect(amazon.data.product.id).toBe(ali.data.product.id);
+  });
+
+  it("keeps distinct color variants of the same model in separate products rows", async () => {
+    const make = (platform: "aliexpress" | "amazon", externalId: string, color: string): Product =>
+      normalizeProduct({
+        raw: {
+          externalId,
+          title: "SoundCore Gadget",
+          price: { amount: "19.99", currency: "usd" },
+          attributes: { brand: "SoundCore", model: "AB-100", color },
+        },
+        platform,
+        url: `https://www.example.com/${platform}/${externalId}`,
+        scrapedAt: "2026-08-18T10:00:00.000Z",
+      });
+
+    const black = await upsertProduct(configuredEnv(), make("aliexpress", "1005001", "black"));
+    const white = await upsertProduct(configuredEnv(), make("amazon", "B0XXXXX", "white"));
+
+    expect(black.status).toBe("created");
+    expect(white.status).toBe("created");
+    if (black.status !== "created" || white.status !== "created") return;
+    expect(server.store.products).toHaveLength(2);
+    expect(white.data.product.id).not.toBe(black.data.product.id);
+  });
+
+  it("never merges similar titles from different brands", async () => {
+    const ali = await upsertProduct(configuredEnv(), noIdentifierProduct("aliexpress", "1005001", "Wireless Earbuds", "SoundCore"));
+    const amazon = await upsertProduct(configuredEnv(), noIdentifierProduct("amazon", "B0XXXXX", "Wireless Earbuds", "Sony"));
+
+    expect(ali.status).toBe("created");
+    expect(amazon.status).toBe("created");
+    if (ali.status !== "created" || amazon.status !== "created") return;
+    expect(server.store.products).toHaveLength(2);
+  });
+
+  it("merges near-identical titles from different sources when neither side has an identifier", async () => {
+    const ali = await upsertProduct(configuredEnv(), noIdentifierProduct("aliexpress", "1005001", "USB-C Cable 3ft", "Acme"));
+    const amazon = await upsertProduct(configuredEnv(), noIdentifierProduct("amazon", "B0XXXXX", "USB-C Cable 3ft", "Acme"));
+
+    expect(ali.status).toBe("created");
+    expect(amazon.status).toBe("updated");
+    if (ali.status !== "created" || amazon.status !== "updated") return;
+    expect(server.store.products).toHaveLength(1);
+    expect(amazon.data.product.id).toBe(ali.data.product.id);
+  });
+
+  it("re-ingests the same source + identifier onto the same product row", async () => {
+    const first = await upsertProduct(configuredEnv(), gtinProduct("aliexpress", "1005001", "SoundCore Wireless Earbuds"));
+    const second = await upsertProduct(
+      configuredEnv(),
+      gtinProduct("aliexpress", "1005001", "SoundCore Wireless Earbuds (2026)"),
+    );
+
+    expect(first.status).toBe("created");
+    expect(second.status).toBe("updated");
+    if (first.status !== "created" || second.status !== "updated") return;
+    expect(server.store.products).toHaveLength(1);
+    expect(second.data.product.id).toBe(first.data.product.id);
+  });
+
+  it("refreshes last_seen_at on the matched product row", async () => {
+    const ali = await upsertProduct(
+      configuredEnv(),
+      normalizeProduct({
+        raw: {
+          externalId: "1005001",
+          title: "SoundCore Wireless Earbuds",
+          price: { amount: "19.99", currency: "usd" },
+          attributes: { brand: "SoundCore", gtin: GTIN },
+        },
+        platform: "aliexpress",
+        url: "https://www.example.com/aliexpress/1005001",
+        scrapedAt: "2026-08-18T10:00:00.000Z",
+      }),
+    );
+    expect(ali.status).toBe("created");
+    if (ali.status !== "created") return;
+
+    const amazon = await upsertProduct(
+      configuredEnv(),
+      gtinProduct("amazon", "B0XXXXX", "SoundCore Wireless Earbuds"),
+    );
+    expect(amazon.status).toBe("updated");
+    if (amazon.status !== "updated") return;
+
+    expect(server.store.products[0].last_seen_at).toBe("2026-08-18T10:00:00.000Z");
+
+    const patch = server.requests.find((request) => request.method === "PATCH");
+    expect(patch).toBeDefined();
+    expect(patch?.url).toContain("/rest/v1/products");
   });
 });
 

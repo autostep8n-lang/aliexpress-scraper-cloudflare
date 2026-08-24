@@ -106,7 +106,7 @@ export function createMockPostgrest(): MockPostgrest {
     const req = new Request(input, init);
     const url = new URL(req.url);
     const method = req.method;
-    const body = method === "POST" ? ((await req.json()) as StoredRow) : undefined;
+    const body = method === "POST" || method === "PATCH" ? ((await req.json()) as StoredRow) : undefined;
     requests.push({ method, url: req.url, headers: req.headers, body });
 
     const overrideIndex = overrides.findIndex(
@@ -123,14 +123,7 @@ export function createMockPostgrest(): MockPostgrest {
     const table = url.pathname.replace(/^\/rest\/v1\//, "");
 
     if (method === "GET") {
-      let rows = store[table] ?? [];
-      for (const [key, value] of url.searchParams) {
-        if (key === "select" || key === "limit" || key === "order") continue;
-        if (value.startsWith("eq.")) {
-          const expected = value.slice(3);
-          rows = rows.filter((row) => row[key] === expected);
-        }
-      }
+      const rows = applySearchParams(store[table] ?? [], url.searchParams);
       const select = url.searchParams.get("select") ?? "*";
       const projected = rows.map((row) => project(row, select, table));
       return new Response(JSON.stringify(projected), {
@@ -160,7 +153,72 @@ export function createMockPostgrest(): MockPostgrest {
       });
     }
 
+    if (method === "PATCH") {
+      const rows = applySearchParams(store[table] ?? [], url.searchParams);
+      for (const row of rows) {
+        Object.assign(row, body);
+      }
+      const select = url.searchParams.get("select") ?? "";
+      if (!select) {
+        return new Response(null, { status: 204 });
+      }
+      const projected = rows.map((row) => project(row, select, table));
+      return new Response(JSON.stringify(projected), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
     return new Response(JSON.stringify({ message: "method not supported" }), { status: 405 });
+  }
+
+  function applySearchParams(rows: StoredRow[], params: URLSearchParams): StoredRow[] {
+    let filtered = [...rows];
+    for (const [key, value] of params) {
+      if (key === "select" || key === "limit" || key === "order" || key === "on_conflict") continue;
+      if (value.startsWith("eq.")) {
+        const expected = value.slice(3);
+        filtered = filtered.filter((row) => row[key] === expected);
+      } else if (value.startsWith("ilike.")) {
+        const pattern = value.slice(6);
+        const regex = new RegExp("^" + pattern.split("%").map(escapeRegExp).join(".*") + "$", "i");
+        filtered = filtered.filter((row) => typeof row[key] === "string" && regex.test(String(row[key])));
+      } else if (value.startsWith("in.")) {
+        const expected = value.slice(3).split(",");
+        filtered = filtered.filter((row) => expected.includes(String(row[key])));
+      } else if (value.startsWith("cs.")) {
+        const expected = JSON.parse(value.slice(3)) as unknown[];
+        filtered = filtered.filter((row) => {
+          const cell = row[key];
+          if (Array.isArray(cell)) return expected.every((item) => cell.includes(item));
+          if (typeof cell === "object" && cell !== null) {
+            const record = cell as Record<string, unknown>;
+            return expected.every((item) => Object.values(record).includes(item));
+          }
+          return false;
+        });
+      } else if (key === "or") {
+        const inner = value.replace(/^\((.*)\)$/, "$1");
+        filtered = filtered.filter((row) => {
+          for (const clause of inner.split(",")) {
+            const dot1 = clause.indexOf(".");
+            const dot2 = clause.indexOf(".", dot1 + 1);
+            if (dot1 === -1 || dot2 === -1) continue;
+            const column = clause.slice(0, dot1);
+            const operator = clause.slice(dot1 + 1, dot2);
+            const operand = clause.slice(dot2 + 1).replace(/\*/g, "%");
+            const single = new URLSearchParams([[column, `${operator}.${operand}`]]);
+            if (applySearchParams([row], single).length > 0) return true;
+          }
+          return false;
+        });
+      }
+    }
+    return filtered;
+  }
+
+  function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
   return {
