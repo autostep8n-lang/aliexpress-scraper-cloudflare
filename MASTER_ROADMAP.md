@@ -24,7 +24,9 @@
   - Lifecycle engine under `src/lifecycle/`.
 - **P1.6 — Profit Engine: DONE**
   - Deterministic product profit engine under `src/profit/` (cost breakdown, net profit, margin, ROI, `metrics` row mapping).
-- **Next task: P1.7 — Competition / Opportunity Score**
+- **P1.8 — Amazon Scraper: DONE**
+  - Deterministic Amazon adapter + JSON-LD-first parser under `src/scrapers/amazon*.ts`; registered in `src/scrapers/registry.ts` and wired through `/api/scrape` (`amazon:<ASIN>` identity, redirect safety, cache, browser-recovery for blocked pages).
+- **Next task: P1.9 — AliExpress Production Scraper**
 
 ## P0 — Foundation
 
@@ -53,7 +55,7 @@
 | # | Feature | Status | Notes |
 |---|---|---|---|
 | 13 | AliExpress Production Scraper | PARTIAL | Scraper exists; production integration remains |
-| 14 | Amazon Scraper | TODO | Not started |
+| 14 | Amazon Scraper | DONE | Completed as P1.8; commit `d012f71`, `amazon:<ASIN>` identity |
 | 15 | TikTok Scraper | PARTIAL | Adapter/discovery work exists; TikTok Shop Saudi Arabia is not officially available and must not block the project |
 
 ## P3 — Market Intelligence
@@ -115,9 +117,10 @@
 3. **P1.4 Trend History Engine**
 4. **P1.5 Product Lifecycle**
 5. **P1.6 Profit Engine**
-6. **P1.7 Competition / Opportunity Score**
-7. **P2 product sources**, starting with AliExpress production integration and Amazon; TikTok remains optional/non-blocking for SA.
-8. **P3 → P4 → P5 → P6 → P7 → P8** in sequence as the intelligence foundation becomes available.
+6. **P1.8 Amazon Scraper**
+7. **P1.7 Competition / Opportunity Score** (NEXT)
+8. **P2 product sources**, starting with AliExpress production integration; TikTok remains optional/non-blocking for SA.
+9. **P3 → P4 → P5 → P6 → P7 → P8** in sequence as the intelligence foundation becomes available.
 
 ## Rules
 
