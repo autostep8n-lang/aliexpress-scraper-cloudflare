@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { routeRequest } from "../src/router";
-import { isTiktokHost } from "../src/scrapers/tiktok";
+import { isAliExpressHost } from "../src/scrapers/aliexpress";
 import { createMockPostgrest, type MockPostgrest } from "./helpers/postgrest-mock";
 
 const SUPABASE_URL = "https://example.supabase.co";
 const SECRET_KEY = "test-secret-key";
 
-const PRODUCT_URL = "https://www.tiktok.com/@shop/product/123456789";
+const ITEM_ID = "1005001234567890";
+const PRODUCT_URL = `https://www.aliexpress.com/item/${ITEM_ID}.html`;
 
 const ctx = {} as ExecutionContext;
 
@@ -15,38 +16,35 @@ function configuredEnv(): Env {
   return { SUPABASE_URL, SUPABASE_SECRET_KEY: SECRET_KEY } as Env;
 }
 
-function productItem(): Record<string, unknown> {
-  return {
-    productId: "123456789",
-    title: "Wireless Earbuds Pro",
-    description: "High-fidelity wireless earbuds with active noise cancellation.",
-    price: 19.99,
-    salePrice: 14.99,
-    compareAtPrice: 29.99,
-    currency: "USD",
-    images: [{ url: "https://p16-sign-sg.tiktokcdn.com/obj/1.jpg" }],
-    rating: { ratingScore: 4.7, ratingCount: 321 },
-    itemAvailable: true,
-    sellerName: "Cool Store",
-    sales: 1200,
-  };
+function runParamsScript(params: unknown): string {
+  return `<script type="text/javascript">window.runParams = ${JSON.stringify(params)};</script>`;
 }
 
-function productPageHtml(item: Record<string, unknown> = productItem()): string {
-  const payload = {
-    __DEFAULT_SCOPE__: {
-      "webapp.product-detail": {
-        productInfo: { item },
+function productPageHtml(): string {
+  const runParams = {
+    data: {
+      actionModule: { itemId: ITEM_ID },
+      titleModule: { subject: "Wireless Earbuds Pro", skuTitle: "Wireless Earbuds Pro" },
+      priceModule: {
+        discountPrice: "12.99",
+        formatedPrice: "US $25.99",
+        formatedActivityPrice: "US $12.99",
       },
+      headerModule: { currency: "USD" },
+      imageModule: { imagePathList: ["//ae01.alicdn.com/kf/Habc.jpg"] },
+      storeModule: { storeName: "Cool Store" },
+      specsModule: { props: [{ attrName: "Brand", attrValue: "SoundCore" }] },
+      feedbackModule: { feedbackRating: { averageStar: "4.7", totalValidNum: "3210" } },
+      breadcrumbModule: { list: [{ name: "Consumer Electronics" }, { name: "Headphones" }] },
     },
   };
   return `<!doctype html><html><head>
-    <script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">${JSON.stringify(payload)}</script>
-  </head><body></body></html>`;
+    <link rel="canonical" href="${PRODUCT_URL}">
+  </head><body>${runParamsScript(runParams)}</body></html>`;
 }
 
 /**
- * Routes TikTok host fetches to a canned HTML page and everything else
+ * Routes AliExpress host fetches to a canned HTML page and everything else
  * (Supabase/PostgREST) to the in-memory mock server.
  */
 function compositeFetch(server: MockPostgrest, html: string): typeof fetch {
@@ -57,7 +55,7 @@ function compositeFetch(server: MockPostgrest, html: string): typeof fetch {
         : input instanceof URL
           ? input
           : new URL((input as Request).url);
-    if (isTiktokHost(url.hostname)) {
+    if (isAliExpressHost(url.hostname)) {
       return Promise.resolve(new Response(html, { status: 200, headers: { "content-type": "text/html" } }));
     }
     return server.fetch(input, init);
@@ -68,7 +66,7 @@ async function get(path: string, requestEnv: Env = configuredEnv()): Promise<Res
   return routeRequest(new Request(`https://worker.example${path}`, { method: "GET" }), requestEnv, ctx);
 }
 
-describe("GET /api/scrape (tiktok-shop ingestion pipeline)", () => {
+describe("GET /api/scrape (aliexpress ingestion pipeline)", () => {
   let server: MockPostgrest;
 
   afterEach(() => {
@@ -76,7 +74,7 @@ describe("GET /api/scrape (tiktok-shop ingestion pipeline)", () => {
     vi.restoreAllMocks();
   });
 
-  it("creates a product + observation and persists tiktok-specific fields", async () => {
+  it("creates a product + observation and persists aliexpress fields", async () => {
     server = createMockPostgrest();
     vi.stubGlobal("fetch", compositeFetch(server, productPageHtml()));
 
@@ -90,32 +88,33 @@ describe("GET /api/scrape (tiktok-shop ingestion pipeline)", () => {
       title: string;
       source: { slug: string };
       product: { dedup_key: string };
-      observation: { external_id: string; price: number };
+      observation: { external_id: string; price: number; currency: string };
     };
     expect(body.status).toBe("created");
-    expect(body.platform).toBe("tiktok-shop");
+    expect(body.platform).toBe("aliexpress");
     expect(body.url).toBe(PRODUCT_URL);
     expect(body.title).toBe("Wireless Earbuds Pro");
-    expect(body.source.slug).toBe("tiktok-shop");
-    expect(body.product.dedup_key).toBe("tiktok-shop:123456789");
-    expect(body.observation.external_id).toBe("123456789");
-    expect(body.observation.price).toBe(14.99);
+    expect(body.source.slug).toBe("aliexpress");
+    expect(body.product.dedup_key).toBe(`aliexpress:${ITEM_ID}`);
+    expect(body.observation.external_id).toBe(ITEM_ID);
+    expect(body.observation.price).toBe(12.99);
+    expect(body.observation.currency).toBe("USD");
 
-    expect(server.store.sources.map((row) => row.slug)).toContain("tiktok-shop");
+    expect(server.store.sources.map((row) => row.slug)).toContain("aliexpress");
     expect(server.store.products).toHaveLength(1);
     expect(server.store.product_sources).toHaveLength(1);
 
     const observation = server.store.product_sources[0];
-    expect(observation.attributes).toMatchObject({ sellerName: "Cool Store", sales: "1200" });
+    expect(observation.attributes).toMatchObject({ seller: "Cool Store", brand: "SoundCore" });
     expect(observation.raw).toMatchObject({
-      productId: "123456789",
+      externalId: ITEM_ID,
       title: "Wireless Earbuds Pro",
-      price: { amount: 14.99, currency: "USD", originalAmount: 29.99 },
-      attributes: { sales: "1200" },
+      price: { amount: 12.99, currency: "USD" },
+      attributes: { Brand: "SoundCore", seller: "Cool Store", brand: "SoundCore" },
     });
   });
 
-  it("returns 200 updated when the same product is scraped again", async () => {
+  it("returns 200 updated when the same item is scraped again", async () => {
     server = createMockPostgrest();
     vi.stubGlobal("fetch", compositeFetch(server, productPageHtml()));
 
@@ -128,6 +127,17 @@ describe("GET /api/scrape (tiktok-shop ingestion pipeline)", () => {
     expect(body.status).toBe("updated");
     expect(server.store.products).toHaveLength(1);
     expect(server.store.product_sources).toHaveLength(1);
+  });
+
+  it("scrapes regional aliexpress domains with the same item id identity", async () => {
+    server = createMockPostgrest();
+    const ukUrl = `https://www.aliexpress.co.uk/item/${ITEM_ID}.html`;
+    vi.stubGlobal("fetch", compositeFetch(server, productPageHtml().replace(PRODUCT_URL, ukUrl)));
+
+    const res = await get(`/api/scrape?url=${encodeURIComponent(ukUrl)}`);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { product: { dedup_key: string } };
+    expect(body.product.dedup_key).toBe(`aliexpress:${ITEM_ID}`);
   });
 
   it("returns 503 SUPABASE_NOT_CONFIGURED when supabase bindings are missing", async () => {
@@ -152,9 +162,12 @@ describe("GET /api/scrape (tiktok-shop ingestion pipeline)", () => {
     expect(server.store.product_sources).toHaveLength(0);
   });
 
-  it("returns 502 BLOCKED for a captcha page", async () => {
+  it("returns 502 BLOCKED for an anti-bot challenge page", async () => {
     server = createMockPostgrest();
-    vi.stubGlobal("fetch", compositeFetch(server, "<html><body>Captcha required to continue.</body></html>"));
+    vi.stubGlobal(
+      "fetch",
+      compositeFetch(server, "<html><body>Please verify you are human to continue</body></html>"),
+    );
 
     const res = await get(`/api/scrape?url=${encodeURIComponent(PRODUCT_URL)}`);
     expect(res.status).toBe(502);
@@ -162,9 +175,9 @@ describe("GET /api/scrape (tiktok-shop ingestion pipeline)", () => {
     expect(body.code).toBe("BLOCKED");
   });
 
-  it("returns 501 NO_SCRAPER for unrelated hosts", async () => {
+  it("returns 501 NO_SCRAPER for a non-product aliexpress page", async () => {
     server = createMockPostgrest();
-    const res = await get("/api/scrape?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Dabc123");
+    const res = await get("/api/scrape?url=https%3A%2F%2Fwww.aliexpress.com%2Fw%2Fwholesale-earbuds.html");
     expect(res.status).toBe(501);
     const body = (await res.json()) as { code: string };
     expect(body.code).toBe("NO_SCRAPER");

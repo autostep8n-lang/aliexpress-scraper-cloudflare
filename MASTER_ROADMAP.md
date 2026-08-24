@@ -26,7 +26,9 @@
   - Deterministic product profit engine under `src/profit/` (cost breakdown, net profit, margin, ROI, `metrics` row mapping).
 - **P1.8 — Amazon Scraper: DONE**
   - Deterministic Amazon adapter + JSON-LD-first parser under `src/scrapers/amazon*.ts`; registered in `src/scrapers/registry.ts` and wired through `/api/scrape` (`amazon:<ASIN>` identity, redirect safety, cache, browser-recovery for blocked pages).
-- **Next task: P1.9 — AliExpress Production Scraper**
+- **P1.9 — AliExpress Production Scraper: DONE**
+  - Cloudflare-native AliExpress adapter + layered parser (runParams / RDS / JSON-LD / HTML fallbacks) under `src/scrapers/aliexpress*.ts`; registered in `src/scrapers/registry.ts` and wired through `/api/scrape` (`aliexpress:<itemId>` identity, regional domain support, redirect safety, cache, browser-recovery for blocked pages).
+- **Next task: P1.10 — Competition / Opportunity Score**
 
 ## P0 — Foundation
 
@@ -54,7 +56,7 @@
 
 | # | Feature | Status | Notes |
 |---|---|---|---|
-| 13 | AliExpress Production Scraper | PARTIAL | Scraper exists; production integration remains |
+| 13 | AliExpress Production Scraper | DONE | Completed as P1.9; Cloudflare-native adapter + layered parser, `aliexpress:<itemId>` identity |
 | 14 | Amazon Scraper | DONE | Completed as P1.8; commit `d012f71`, `amazon:<ASIN>` identity |
 | 15 | TikTok Scraper | PARTIAL | Adapter/discovery work exists; TikTok Shop Saudi Arabia is not officially available and must not block the project |
 
@@ -118,9 +120,10 @@
 4. **P1.5 Product Lifecycle**
 5. **P1.6 Profit Engine**
 6. **P1.8 Amazon Scraper**
-7. **P1.7 Competition / Opportunity Score** (NEXT)
-8. **P2 product sources**, starting with AliExpress production integration; TikTok remains optional/non-blocking for SA.
-9. **P3 → P4 → P5 → P6 → P7 → P8** in sequence as the intelligence foundation becomes available.
+7. **P1.9 AliExpress Production Scraper**
+8. **P1.10 Competition / Opportunity Score** (NEXT)
+9. **P2 product sources**, continuing with other platforms; TikTok remains optional/non-blocking for SA.
+10. **P3 → P4 → P5 → P6 → P7 → P8** in sequence as the intelligence foundation becomes available.
 
 ## Rules
 

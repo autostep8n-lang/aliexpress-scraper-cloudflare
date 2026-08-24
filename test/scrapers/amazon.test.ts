@@ -491,7 +491,7 @@ describe("scraper registry", () => {
   });
 
   it("returns undefined for unsupported URLs", () => {
-    expect(findScraper(new URL("https://www.aliexpress.com/item/1.html"))).toBeUndefined();
+    expect(findScraper(new URL("https://www.youtube.com/watch?v=abc123"))).toBeUndefined();
     expect(findScraper(new URL("https://www.amazon.com/b/?node=1"))).toBeUndefined();
   });
 

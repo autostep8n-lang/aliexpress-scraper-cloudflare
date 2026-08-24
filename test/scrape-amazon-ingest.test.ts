@@ -187,7 +187,7 @@ describe("GET /api/scrape (amazon ingestion pipeline)", () => {
 
   it("returns 501 NO_SCRAPER for unrelated hosts", async () => {
     server = createMockPostgrest();
-    const res = await get("/api/scrape?url=https%3A%2F%2Fwww.aliexpress.com%2Fitem%2F1.html");
+    const res = await get("/api/scrape?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Dabc123");
     expect(res.status).toBe(501);
     const body = (await res.json()) as { code: string };
     expect(body.code).toBe("NO_SCRAPER");
