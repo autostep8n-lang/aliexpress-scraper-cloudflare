@@ -14,7 +14,17 @@
   - Typecheck clean.
   - Wrangler build/dry-run passing.
   - Production deployment remains a separate verification step where credentials are available.
-- **Next task: P1.2 — Product Normalization & Enrichment**
+- **P1.2 — Product Normalization & Enrichment: DONE**
+  - Reusable pure enrichment engine under `src/products/enrich.ts`.
+- **P1.3 — Scoring Engine: DONE**
+  - Deterministic scoring engine and quality signals under `src/scoring/`.
+- **P1.4 — Trend History Engine: DONE**
+  - Trend history engine under `src/trends/`.
+- **P1.5 — Product Lifecycle: DONE**
+  - Lifecycle engine under `src/lifecycle/`.
+- **P1.6 — Profit Engine: DONE**
+  - Deterministic product profit engine under `src/profit/` (cost breakdown, net profit, margin, ROI, `metrics` row mapping).
+- **Next task: P1.7 — Competition / Opportunity Score**
 
 ## P0 — Foundation
 
@@ -31,12 +41,12 @@
 | # | Feature | Status | Notes |
 |---|---|---|---|
 | 6 | Product Matching / Deduplication | DONE | Completed as P1.1; 223 tests passing |
-| 7 | Product Normalization & Enrichment | NEXT | Existing normalization foundations; complete as a reusable engine |
-| 8 | Scoring Engine | TODO | Not started |
-| 9 | Trend History Engine | TODO | Not started |
-| 10 | Product Lifecycle | TODO | Not started |
-| 11 | Profit Engine | TODO | Not started |
-| 12 | Competition / Opportunity Score | TODO | Not started |
+| 7 | Product Normalization & Enrichment | DONE | Completed as P1.2; reusable pure engine in `src/products/enrich.ts` |
+| 8 | Scoring Engine | DONE | Completed as P1.3; deterministic engine in `src/scoring/` |
+| 9 | Trend History Engine | DONE | Completed as P1.4; engine in `src/trends/` |
+| 10 | Product Lifecycle | DONE | Completed as P1.5; engine in `src/lifecycle/` |
+| 11 | Profit Engine | DONE | Completed as P1.6; deterministic engine in `src/profit/` |
+| 12 | Competition / Opportunity Score | NEXT | Not started |
 
 ## P2 — Product Sources
 
