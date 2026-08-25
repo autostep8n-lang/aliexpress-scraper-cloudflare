@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  extractToken,
+  extractMtopCookies,
   fetchAliExpressProductMtop,
   mapMtopResult,
   needsTokenRetry,
@@ -104,16 +104,29 @@ describe("regionForHost", () => {
   });
 });
 
-describe("extractToken", () => {
-  it("reads the _m_h5_tk token from a Set-Cookie header", () => {
-    expect(extractToken(`_m_h5_tk=641dd17c1b34a2a36b417422edb239d3_1787672719000; Domain=.aliexpress.com; Path=/; HttpOnly`)).toBe(
-      "641dd17c1b34a2a36b417422edb239d3",
+describe("extractMtopCookies", () => {
+  it("returns the sign token and the full cookie jar", () => {
+    const cookies = extractMtopCookies(
+      `_m_h5_tk=641dd17c1b34a2a36b417422edb239d3_1787672719000; Domain=.aliexpress.com; Path=/; HttpOnly, _m_h5_tk_enc=87946f2baf70f36896254272972730b2; Domain=.aliexpress.com; Path=/`,
     );
+    expect(cookies).toEqual({
+      signToken: "641dd17c1b34a2a36b417422edb239d3",
+      cookie: "_m_h5_tk=641dd17c1b34a2a36b417422edb239d3_1787672719000; _m_h5_tk_enc=87946f2baf70f36896254272972730b2",
+    });
+  });
+
+  it("falls back to the bare _m_h5_tk cookie when _m_h5_tk_enc is absent", () => {
+    expect(
+      extractMtopCookies(`_m_h5_tk=641dd17c1b34a2a36b417422edb239d3_1787672719000; Path=/; HttpOnly`),
+    ).toEqual({
+      signToken: "641dd17c1b34a2a36b417422edb239d3",
+      cookie: "_m_h5_tk=641dd17c1b34a2a36b417422edb239d3_1787672719000",
+    });
   });
 
   it("returns undefined when the cookie is absent", () => {
-    expect(extractToken(undefined)).toBeUndefined();
-    expect(extractToken("Other=value; Path=/")).toBeUndefined();
+    expect(extractMtopCookies(undefined)).toBeUndefined();
+    expect(extractMtopCookies("Other=value; Path=/")).toBeUndefined();
   });
 });
 
@@ -295,7 +308,7 @@ describe("fetchAliExpressProductMtop", () => {
     expect(calls[0].appKey).toBe("12574478");
     expect(calls[0].cookie).toBeNull();
     expect(calls[0].sign).toBe(md5(`&${calls[0].t}&12574478&${calls[0].data}`));
-    expect(calls[1].cookie).toBe(`_m_h5_tk=${TOKEN}`);
+    expect(calls[1].cookie).toBe(`_m_h5_tk=${TOKEN}_1787672719000`);
     expect(calls[1].sign).toBe(md5(`${TOKEN}&${calls[1].t}&12574478&${calls[1].data}`));
 
     const payload = JSON.parse(decodeURIComponent(calls[1].data)) as Record<string, string>;
@@ -305,6 +318,34 @@ describe("fetchAliExpressProductMtop", () => {
     expect(parsed.itemId).toBe(ITEM_ID);
     expect(parsed.title).toBe("Portable Hair Straightener Comb 2600mAh");
     expect(parsed.price).toEqual({ amount: 3.43, currency: "USD", originalAmount: 7.46 });
+  });
+
+  it("sends both mtop cookies (_m_h5_tk and _m_h5_tk_enc) on the signed retry", async () => {
+    const TOKEN = "641dd17c1b34a2a36b417422edb239d3";
+    const ENC = "87946f2baf70f36896254272972730b2";
+    const cookies: string[] = [];
+    let callCount = 0;
+
+    const fetchStub = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      callCount += 1;
+      const cookie = new Headers(init?.headers).get("cookie");
+      if (callCount === 1) {
+        return new Response(tokenEmptyBody(), {
+          status: 200,
+          headers: {
+            "set-cookie": `_m_h5_tk=${TOKEN}_1787672719000; Domain=.aliexpress.com; Path=/; HttpOnly, _m_h5_tk_enc=${ENC}; Domain=.aliexpress.com; Path=/`,
+          },
+        });
+      }
+      cookies.push(cookie ?? "");
+      return new Response(jsonpBody(mtopResult(ITEM_ID)), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchStub);
+
+    await fetchAliExpressProductMtop(ITEM_ID, HINT.url);
+
+    expect(cookies[0]).toBe(`_m_h5_tk=${TOKEN}_1787672719000; _m_h5_tk_enc=${ENC}`);
   });
 
   it("propagates a BLOCKED punish response from the signed retry", async () => {

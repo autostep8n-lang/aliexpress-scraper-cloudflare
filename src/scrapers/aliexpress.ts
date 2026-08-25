@@ -155,6 +155,11 @@ function buildRawPayload(parsed: AliExpressParsedProduct): Record<string, unknow
  * first successfully parsed product, or throws a typed error describing the
  * most precise failure (an anti-bot `BLOCKED`/`NO_PRODUCT_DATA` from any
  * provider wins over transient provider errors).
+ *
+ * The Open Platform provider is STRICTLY OPTIONAL: it is only attempted when
+ * credentials are configured, and when it fails the loop falls through to the
+ * credential-free mtop gateway. The scraper never requires
+ * `ALIEXPRESS_OPENAPI_KEY` / `ALIEXPRESS_OPENAPI_SECRET` to function.
  */
 async function fetchAliExpressProductWithFallbacks(
   env: Env,

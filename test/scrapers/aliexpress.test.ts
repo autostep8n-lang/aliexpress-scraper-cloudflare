@@ -710,6 +710,49 @@ describe("aliexpressScraper fallback recovery chain", () => {
     expect(result.data).toMatchObject({ price: { amount: 3.43, currency: "USD", originalAmount: 7.46 } });
   });
 
+  it("falls through to mtop when configured OpenAPI credentials are rejected", async () => {
+    const fetchFn: typeof fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url =
+        typeof input === "string"
+          ? new URL(input)
+          : input instanceof URL
+            ? input
+            : new URL((input as Request).url);
+      if (url.hostname === "api.aliexpress.com") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ error_response: { code: "400", msg: "Invalid signature" } }), { status: 200 }),
+        );
+      }
+      if (url.hostname === "acs.aliexpress.com") {
+        const cookie = new Headers(init?.headers).get("cookie");
+        if (!cookie) {
+          return Promise.resolve(
+            new Response(tokenEmptyJsonp(), {
+              status: 200,
+              headers: { "set-cookie": "_m_h5_tk=641dd17c1b34a2a36b417422edb239d3_1787672719000; Path=/; HttpOnly" },
+            }),
+          );
+        }
+        return Promise.resolve(new Response(mtopJsonp(mtopResult()), { status: 200 }));
+      }
+      return Promise.resolve(new Response(csrShellHtml(), { status: 200 }));
+    };
+    vi.stubGlobal("fetch", fetchFn);
+    const env = {
+      ALIEXPRESS_OPENAPI_KEY: "test-app-key",
+      ALIEXPRESS_OPENAPI_SECRET: "test-app-secret",
+    } as unknown as Env;
+
+    const result = await aliexpressScraper.scrape(mtopUrl, env, ctx);
+
+    expect(result.title).toBe("Portable Hair Straightener Comb 2600mAh");
+    expect(result.data).toMatchObject({
+      externalId: MTOP_ITEM_ID,
+      price: { amount: 3.43, currency: "USD", originalAmount: 7.46 },
+      attributes: { Brand: "SoundCore", brand: "SoundCore", seller: "Shop1103920178 Store" },
+    });
+  });
+
   it("surfaces BLOCKED when the mtop gateway punishes and no browser is configured", async () => {
     vi.stubGlobal("fetch", mtopCompositeFetch(punishJsonp()));
 

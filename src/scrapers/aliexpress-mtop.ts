@@ -18,8 +18,10 @@ import { md5 } from "../utils/md5";
  * client, no browser required. Flow:
  *
  *   1. Send an unsigned request with the product payload; the gateway answers
- *      `FAIL_SYS_TOKEN_EMPTY` and sets the `_m_h5_tk` token cookie.
- *   2. Re-sign with `MD5("<token>&<ts>&<appKey>&<data>")` and retry.
+ *      `FAIL_SYS_TOKEN_EMPTY` and sets the `_m_h5_tk` and `_m_h5_tk_enc`
+ *      token cookies.
+ *   2. Re-sign with `MD5("<token>&<ts>&<appKey>&<data>")` and retry, sending
+ *      BOTH cookies back (`_m_h5_tk=<token>_<expiry>` and `_m_h5_tk_enc`).
  *   3. On success the `data.result` JSON carries the full product modules
  *      (title, price, images, attributes, rating, store, ...).
  *
@@ -101,6 +103,14 @@ interface MtopCallResult {
   setCookie?: string;
 }
 
+/** The cookies the gateway issues during the token bootstrap. */
+export interface MtopCookies {
+  /** Token-only value (before the `_<expiry>` suffix) used to sign the request. */
+  signToken: string;
+  /** Full cookie jar to send on the signed retry: `_m_h5_tk` and `_m_h5_tk_enc`. */
+  cookie: string;
+}
+
 /** Minimal envelope of the JSONP response the mtop gateway returns. */
 interface MtopEnvelope {
   ret?: string[];
@@ -144,17 +154,18 @@ export async function fetchAliExpressProductMtop(itemId: string, url: URL): Prom
     ext: JSON.stringify({ site: region.site, crawler: false }),
   });
 
-  let call = await callMtop(data, "");
-  let token = extractToken(call.setCookie);
-  if (needsTokenRetry(call.body) && token) {
-    call = await callMtop(data, token);
+  let call = await callMtop(data);
+  const cookies = extractMtopCookies(call.setCookie);
+  if (needsTokenRetry(call.body) && cookies) {
+    call = await callMtop(data, cookies);
   }
 
   return parseMtopPayload(call.body, { url, itemId });
 }
 
-async function callMtop(data: string, token: string): Promise<MtopCallResult> {
+async function callMtop(data: string, cookies?: MtopCookies): Promise<MtopCallResult> {
   const timestamp = String(Date.now());
+  const token = cookies?.signToken ?? "";
   const sign = md5(`${token}&${timestamp}&${MTOP_APP_KEY}&${data}`);
 
   const endpoint = new URL(`https://${MTOP_HOST}/h5/${MTOP_API}/${MTOP_VERSION}/`);
@@ -171,7 +182,7 @@ async function callMtop(data: string, token: string): Promise<MtopCallResult> {
     "accept-language": "en-US,en;q=0.9",
     referer: `https://${MTOP_HOST}/`,
   };
-  if (token) headers.cookie = `_m_h5_tk=${token}`;
+  if (cookies) headers.cookie = cookies.cookie;
 
   let response: Response;
   try {
@@ -188,17 +199,48 @@ async function callMtop(data: string, token: string): Promise<MtopCallResult> {
 
   return {
     body: await response.text(),
-    setCookie: response.headers.get("set-cookie") ?? undefined,
+    setCookie: collectSetCookie(response),
   };
 }
 
-/** Reads the `_m_h5_tk` token from a `Set-Cookie` header value. */
-export function extractToken(setCookie: string | undefined): string | undefined {
+/**
+ * Concatenates all `Set-Cookie` headers of a response. Workers exposes each
+ * header separately via `getSetCookie()`; the plain `get("set-cookie")` is a
+ * fallback for other runtimes (and for the mocked `Response` in tests).
+ */
+function collectSetCookie(response: Response): string | undefined {
+  const values = typeof response.headers.getSetCookie === "function" ? response.headers.getSetCookie() : [];
+  if (values.length > 0) return values.join(", ");
+  const single = response.headers.get("set-cookie");
+  return single ?? undefined;
+}
+
+/**
+ * Reads the mtop cookies from a `Set-Cookie` header value. The gateway issues
+ * two cookies during the token bootstrap: `_m_h5_tk=<token>_<expiry>` and
+ * `_m_h5_tk_enc=<value>`. The signed retry must send BOTH: sending only the
+ * bare token leaves the gateway answering `FAIL_SYS_TOKEN_EMPTY`, and sending
+ * the `_m_h5_tk` without `_m_h5_tk_enc` yields `FAIL_SYS_TOKEN_ILLEGAL`.
+ *
+ * The signature still uses only the token part (everything before the first
+ * `_`), so `signToken` is extracted separately from the full cookie value.
+ */
+export function extractMtopCookies(setCookie: string | undefined): MtopCookies | undefined {
   if (!setCookie) return undefined;
-  const match = setCookie.match(/(?:^|[,;\s])_m_h5_tk=([^;,]+)/);
-  if (!match) return undefined;
-  const token = match[1].split("_")[0];
-  return token.length > 0 ? token : undefined;
+
+  const pair = (name: string): string | undefined => {
+    const match = setCookie?.match(new RegExp(`(?:^|[,;\\s])${name}=([^;,]*)`));
+    return match?.[1];
+  };
+
+  const full = pair("_m_h5_tk");
+  if (!full) return undefined;
+  const signToken = full.split("_")[0];
+  if (!signToken) return undefined;
+
+  const enc = pair("_m_h5_tk_enc");
+  const cookie = enc ? `_m_h5_tk=${full}; _m_h5_tk_enc=${enc}` : `_m_h5_tk=${full}`;
+  return { signToken, cookie };
 }
 
 /** True when the gateway wants a token-signed retry (token missing/expired). */
