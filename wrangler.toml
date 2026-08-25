@@ -51,6 +51,12 @@ required = [ "SUPABASE_URL", "SUPABASE_SECRET_KEY" ]
 # execution, so the SSR product data TikTok would otherwise withhold becomes
 # available to the existing parser.
 #
+# AliExpress notes: AliExpress's anti-bot (_____tmd_____/punish, x5sec) also
+# punishes headless browsers, so the AliExpress scraper only reaches this
+# binding as a LAST resort. It first queries the no-browser providers: the
+# official Open Platform API (when ALIEXPRESS_OPENAPI_KEY/SECRET are set) and
+# the internal mtop gateway the website itself uses.
+#
 # Requirements:
 #   - The account must have Browser Rendering / Browser Run enabled
 #     (Workers Paid). Workers Free is limited to 10 browser-minutes/day.
@@ -61,3 +67,19 @@ required = [ "SUPABASE_URL", "SUPABASE_SECRET_KEY" ]
 #     Quick Actions; unit tests mock the binding instead.
 [browser]
 binding = "BROWSER"
+
+# ============================================================================
+# Optional AliExpress Open Platform credentials (open.aliexpress.com)
+# ----------------------------------------------------------------------------
+# When present, the AliExpress scraper prefers the official
+# `aliexpress.ds.product.get` API - the production-grade, anti-bot-free
+# provider. These are OPTIONAL and must be set as secrets on the Worker (they
+# are not declared under `[secrets].required`, so deploys succeed without them):
+#
+#   npx wrangler secret put ALIEXPRESS_OPENAPI_KEY
+#   npx wrangler secret put ALIEXPRESS_OPENAPI_SECRET
+#
+# See src/scrapers/aliexpress-openapi.ts for the signing protocol and the
+# app-registration steps. Without credentials the scraper falls back to the
+# internal mtop gateway, which needs no API key.
+# ============================================================================

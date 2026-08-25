@@ -8,3 +8,10 @@
 
 SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_SECRET_KEY=<your-secret-key>
+
+# Optional: official AliExpress Open Platform (open.aliexpress.com) app
+# credentials. When set, the AliExpress scraper prefers the official
+# `aliexpress.ds.product.get` API. Without them it falls back to the internal
+# mtop gateway, which needs no API key.
+# ALIEXPRESS_OPENAPI_KEY=<your-app-key>
+# ALIEXPRESS_OPENAPI_SECRET=<your-app-secret>

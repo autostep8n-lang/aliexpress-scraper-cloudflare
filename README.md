@@ -66,7 +66,32 @@ npm run deploy
 | GET    | `/`              | Landing page                                         |
 | GET    | `/health`        | Health check (reports binding status, never values)  |
 | GET    | `/health/supabase` | Live Supabase connectivity check (never leaks keys) |
-| GET    | `/api/scrape?url=...` | Scraping API — returns 501 until scrapers land  |
+| GET    | `/api/scrape?url=...` | Scraping API — normalizes + persists a product  |
+
+## AliExpress scraping architecture
+
+AliExpress no longer embeds product data server-side for many pages: the HTML
+is a client-side-rendered shell (`window._d_c_.isCSR = true`) and the payload
+is fetched over the internal mtop gateway. AliExpress's anti-bot
+(`_____tmd_____/punish`, x5sec) also punishes headless browsers — including
+Cloudflare Browser Run — so browser rendering is not a viable fallback.
+
+The AliExpress scraper therefore recovers blocked/shell pages in this order:
+
+1. **Official Open Platform API** (`aliexpress.ds.product.get`) when
+   `ALIEXPRESS_OPENAPI_KEY` / `ALIEXPRESS_OPENAPI_SECRET` are configured. This
+   is the production-grade, anti-bot-free provider (see
+   `src/scrapers/aliexpress-openapi.ts`).
+2. **Internal mtop gateway** (`acs.aliexpress.com`) — the same endpoint the
+   website itself uses, called with a token-bootstrap + MD5-signed request. No
+   browser and no API key required (see `src/scrapers/aliexpress-mtop.ts`).
+3. **Cloudflare Browser Run** as a last resort (kept for other bot surfaces;
+   fundamentally blocked by AliExpress).
+
+Each provider produces the same normalize-ready shape, so the shared
+normalization, deduplication, matching, and Supabase ingestion pipeline is
+unchanged. When every provider is blocked, the scraper returns a precise typed
+error (`BLOCKED`, `NOT_PRODUCT_PAGE`, `PROVIDER_CREDENTIALS_MISSING`, ...).
 
 ## Configuration & Secrets
 

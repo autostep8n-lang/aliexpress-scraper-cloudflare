@@ -16,10 +16,19 @@ export interface Env {
   SCRAPE_ASSETS?: R2Bucket;
   /**
    * Optional Cloudflare Browser Run (Browser Rendering) binding. Used to
-   * render TikTok Shop product pages that TikTok answers with a challenge
-   * page when fetched directly from Worker datacenter IPs. Declared in
-   * `wrangler.toml` under `[browser]`; optional at runtime so the Worker
-   * keeps degrading to a typed `BLOCKED` error when the binding is absent.
+   * render pages that answer a challenge when fetched directly from Worker
+   * datacenter IPs. Declared in `wrangler.toml` under `[browser]`; optional at
+   * runtime so the Worker keeps degrading to a typed error when the binding
+   * is absent. Note: AliExpress's anti-bot also punishes Browser Run, so the
+   * AliExpress scraper tries the no-browser providers first.
    */
   BROWSER?: BrowserRun;
+  /**
+   * Optional AliExpress Open Platform (open.aliexpress.com) app credentials.
+   * When set, the AliExpress scraper prefers the official `aliexpress.ds.product.get`
+   * API - the production-grade, anti-bot-free provider. Set as secrets, never
+   * committed. See `src/scrapers/aliexpress-openapi.ts`.
+   */
+  ALIEXPRESS_OPENAPI_KEY?: string;
+  ALIEXPRESS_OPENAPI_SECRET?: string;
 }

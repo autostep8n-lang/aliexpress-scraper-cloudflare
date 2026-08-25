@@ -7,6 +7,8 @@ import {
   parseAliExpressPage,
   type AliExpressParsedProduct,
 } from "./aliexpress-parser";
+import { fetchAliExpressProductMtop } from "./aliexpress-mtop";
+import { fetchAliExpressProductOpenApi, hasOpenApiCredentials } from "./aliexpress-openapi";
 import { ScraperError, type ScraperModule, type ScraperResult } from "./types";
 
 export { isAliExpressHost };
@@ -21,6 +23,19 @@ export { isAliExpressHost };
  * can run the shared ingestion pipeline over the result. AliExpress identity
  * is the numeric item id throughout, so deduplication keeps working as
  * `aliexpress:<itemId>`.
+ *
+ * AliExpress no longer serves server-side product data for many pages: the
+ * HTML is a client-side-rendered shell and the browser would fetch the payload
+ * from the internal mtop gateway. Because AliExpress's anti-bot also punishes
+ * headless browsers (including Cloudflare Browser Run - `_____tmd_____/punish`),
+ * the recovery path prefers providers that need no browser:
+ *
+ *   1. Official Open Platform API (`aliexpress.ds.product.get`) when
+ *      `ALIEXPRESS_OPENAPI_KEY` / `ALIEXPRESS_OPENAPI_SECRET` are configured.
+ *   2. The mtop gateway (`acs.aliexpress.com`) - the same endpoint the website
+ *      itself uses; works from a plain HTTP client with a token bootstrap.
+ *   3. Cloudflare Browser Run as a last resort (fundamentally blocked by
+ *      AliExpress, but kept as a fallback for other bot surfaces).
  */
 
 const USER_AGENT =
@@ -73,22 +88,23 @@ export const aliexpressScraper: ScraperModule = {
     } catch (err) {
       // AliExpress serves datacenter-originated plain fetches an anti-bot
       // challenge page (BLOCKED) or a client-side-only shell
-      // (NO_PRODUCT_DATA). When the Cloudflare Browser Run binding is
-      // available, render the page in a real headless Chromium and re-parse
-      // the post-JS HTML.
-      if (!isBrowserRecoverable(err) || !env.BROWSER) {
+      // (NO_PRODUCT_DATA) whose payload lives behind the internal mtop
+      // gateway. Recover by querying the no-browser providers first and only
+      // fall back to Cloudflare Browser Run as a last resort.
+      if (!isBrowserRecoverable(err)) {
         throw err;
       }
-      const rendered = await renderAliExpressWithBrowser(env, resolved.url);
-      const renderedItemId = extractItemId(rendered.url);
-      if (!renderedItemId) {
-        throw new ScraperError(
-          "NOT_PRODUCT_PAGE",
-          `browser-rendered page is not an AliExpress product page: ${rendered.url.href}`,
-        );
+      const originalError = err as ScraperError;
+      const parsed = await fetchAliExpressProductWithFallbacks(env, resolved.url, resolvedItemId, originalError);
+      const canonical = canonicalProductUrl(parsed);
+      if (canonical) {
+        try {
+          resolved = { url: new URL(canonical), html: resolved.html };
+        } catch {
+          // Malformed canonical URL - keep the resolved page URL.
+        }
       }
-      raw = buildRawPayload(parseAliExpressPage(rendered.html, { url: rendered.url, itemId: renderedItemId }));
-      resolved = rendered;
+      raw = buildRawPayload(parsed);
     }
 
     await writeCache(env, ctx, cacheKey, raw);
@@ -131,6 +147,88 @@ function buildRawPayload(parsed: AliExpressParsedProduct): Record<string, unknow
   if (parsed.rating) raw.rating = parsed.rating;
   if (parsed.availability !== undefined) raw.available = parsed.availability;
   return raw;
+}
+
+/**
+ * Recovers a `BLOCKED` / `NO_PRODUCT_DATA` page by querying the no-browser
+ * AliExpress providers in order, then the browser as a last resort. Returns the
+ * first successfully parsed product, or throws a typed error describing the
+ * most precise failure (an anti-bot `BLOCKED`/`NO_PRODUCT_DATA` from any
+ * provider wins over transient provider errors).
+ */
+async function fetchAliExpressProductWithFallbacks(
+  env: Env,
+  url: URL,
+  itemId: string,
+  originalError: ScraperError,
+): Promise<AliExpressParsedProduct> {
+  const attempts: Array<() => Promise<AliExpressParsedProduct>> = [];
+  if (hasOpenApiCredentials(env)) {
+    attempts.push(() => fetchAliExpressProductOpenApi(env, itemId, url));
+  }
+  attempts.push(() => fetchAliExpressProductMtop(itemId, url));
+
+  const errors: ScraperError[] = [];
+  for (const attempt of attempts) {
+    try {
+      return await attempt();
+    } catch (err) {
+      if (err instanceof ScraperError) {
+        errors.push(err);
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  if (env.BROWSER) {
+    try {
+      const rendered = await renderAliExpressWithBrowser(env, url);
+      if (looksLikePunishPage(rendered.url.href, rendered.html)) {
+        throw new ScraperError(
+          "BLOCKED",
+          "AliExpress redirected the headless browser to its anti-bot punish page (_____tmd_____/punish); no product data available",
+        );
+      }
+      const renderedItemId = extractItemId(rendered.url);
+      if (!renderedItemId) {
+        throw new ScraperError(
+          "NOT_PRODUCT_PAGE",
+          `browser-rendered page is not an AliExpress product page: ${rendered.url.href}`,
+        );
+      }
+      return parseAliExpressPage(rendered.html, { url: rendered.url, itemId: renderedItemId });
+    } catch (err) {
+      if (err instanceof ScraperError) {
+        errors.push(err);
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  throw selectFallbackError(originalError, errors);
+}
+
+/** A `BLOCKED`/`NO_PRODUCT_DATA` from a provider is more precise than the page error. */
+function selectFallbackError(originalError: ScraperError, errors: ScraperError[]): ScraperError {
+  const definitive = errors.find((err) => err.code === "BLOCKED" || err.code === "NO_PRODUCT_DATA");
+  return definitive ?? originalError;
+}
+
+/** The canonical product URL carried by a parsed product, if any. */
+function canonicalProductUrl(parsed: AliExpressParsedProduct): string | undefined {
+  const productUrl = typeof parsed.raw?.["productUrl"] === "string" ? parsed.raw["productUrl"] : undefined;
+  if (productUrl) return productUrl;
+  if (/^\d{6,20}$/.test(parsed.itemId)) {
+    return `https://www.aliexpress.com/item/${parsed.itemId}.html`;
+  }
+  return undefined;
+}
+
+/** True when a URL or HTML looks like AliExpress's anti-bot punish page. */
+export function looksLikePunishPage(url: string, html: string): boolean {
+  return /_____tmd_____|(^|[\/_.-])punish([\/?]|$)/i.test(url) || /_____tmd_____|RGV587_ERROR|x5sec/i.test(html);
 }
 
 export async function fetchAliExpressPage(start: URL): Promise<ResolvedPage> {

@@ -194,4 +194,136 @@ describe("GET /api/scrape (aliexpress ingestion pipeline)", () => {
     expect(invalid.status).toBe(400);
     expect(((await invalid.json()) as { code: string }).code).toBe("INVALID_URL");
   });
+
+  it("ingests a client-side-rendered shell through the mtop gateway recovery path", async () => {
+    server = createMockPostgrest();
+    const MTOP_ITEM_ID = "1005012410104961";
+    const csrShell = `<!doctype html><html><head>
+      <meta name="og:title" content="Portable Hair Straightener Comb 2600mAh">
+    </head><body>
+      <script type="text/javascript">window.runParams = {};</script>
+      <script type="text/javascript">window._d_c_ = { isCSR: true };</script>
+    </body></html>`;
+
+    const mtopResult = {
+      GLOBAL_DATA: {
+        globalData: {
+          productId: MTOP_ITEM_ID,
+          subject: "Portable Hair Straightener Comb 2600mAh",
+          productInfo: { productId: MTOP_ITEM_ID, hasStock: true },
+          offlineInfo: { itemStatus: 0 },
+          sellerName: "Shop1103920178 Store",
+        },
+      },
+      PRODUCT_TITLE: { text: "Portable Hair Straightener Comb 2600mAh" },
+      PRICE: {
+        targetSkuPriceInfo: {
+          originalPrice: { currency: "USD", formatedAmount: "$7.46", value: 7.46 },
+          salePriceLocal: "$3.43|3.43|",
+        },
+      },
+      HEADER_IMAGE_PC: { mainImages: [{ imageUrl: "https://ae-pic-a1.aliexpress-media.com/kf/S9e0501832f6b49698d4502e004a3a390a.jpeg" }] },
+      PRODUCT_PROP_PC: { showedProps: [{ attrName: "Brand", attrValue: "SoundCore" }] },
+      PC_RATING: { rating: 4.5, totalValidNum: 4 },
+      SHOP_CARD_PC: { storeName: "Shop1103920178 Store" },
+    };
+
+    const mtopFetch: typeof fetch = (input, init) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input)
+          : input instanceof URL
+            ? input
+            : new URL((input as Request).url);
+      if (url.hostname === "acs.aliexpress.com") {
+        if (!new Headers(init?.headers).get("cookie")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ api: "mtop.aliexpress.pdp.pc.query", data: {}, ret: ["FAIL_SYS_TOKEN_EMPTY::令牌为空"], v: "1.0" }),
+              { status: 200, headers: { "set-cookie": "_m_h5_tk=641dd17c1b34a2a36b417422edb239d3_1787672719000; Path=/; HttpOnly" } },
+            ),
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            `cb(${JSON.stringify({
+              api: "mtop.aliexpress.pdp.pc.query",
+              data: { result: mtopResult },
+              ret: ["SUCCESS::调用成功"],
+              v: "1.0",
+            })})`,
+            { status: 200 },
+          ),
+        );
+      }
+      if (isAliExpressHost(url.hostname)) {
+        return Promise.resolve(new Response(csrShell, { status: 200, headers: { "content-type": "text/html" } }));
+      }
+      return server.fetch(input, init);
+    };
+    vi.stubGlobal("fetch", mtopFetch);
+
+    const productUrl = `https://www.aliexpress.com/item/${MTOP_ITEM_ID}.html`;
+    const res = await get(`/api/scrape?url=${encodeURIComponent(productUrl)}`);
+    expect(res.status).toBe(201);
+
+    const body = (await res.json()) as {
+      title: string;
+      observation: { external_id: string; price: number; currency: string };
+    };
+    expect(body.title).toBe("Portable Hair Straightener Comb 2600mAh");
+    expect(body.observation.external_id).toBe(MTOP_ITEM_ID);
+    expect(body.observation.price).toBe(3.43);
+    expect(body.observation.currency).toBe("USD");
+
+    expect(server.store.products).toHaveLength(1);
+    expect(server.store.products[0].dedup_key).toBe(`aliexpress:${MTOP_ITEM_ID}`);
+    expect(server.store.product_sources).toHaveLength(1);
+    expect(server.store.product_sources[0].attributes).toMatchObject({
+      seller: "Shop1103920178 Store",
+      brand: "SoundCore",
+    });
+  });
+
+  it("returns 502 BLOCKED when every provider is punished and no browser is configured", async () => {
+    server = createMockPostgrest();
+    const punishFetch: typeof fetch = (input, init) => {
+      const url =
+        typeof input === "string"
+          ? new URL(input)
+          : input instanceof URL
+            ? input
+            : new URL((input as Request).url);
+      if (url.hostname === "acs.aliexpress.com") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              api: "mtop.aliexpress.pdp.pc.query",
+              ret: ["FAIL_SYS_USER_VALIDATE", "RGV587_ERROR::SM::哎哟喂,被挤爆啦,请稍后重试"],
+              data: { url: "https://acs.aliexpress.com:443//h5/mtop.aliexpress.pdp.pc.query/1.0/_____tmd_____/punish?x5secdata=abc" },
+              v: "1.0",
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      if (isAliExpressHost(url.hostname)) {
+        return Promise.resolve(
+          new Response("<html><body>window.runParams = {};</body></html>", {
+            status: 200,
+            headers: { "content-type": "text/html" },
+          }),
+        );
+      }
+      return server.fetch(input, init);
+    };
+    vi.stubGlobal("fetch", punishFetch);
+
+    const productUrl = `https://www.aliexpress.com/item/1005012410104961.html`;
+    const res = await get(`/api/scrape?url=${encodeURIComponent(productUrl)}`);
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("BLOCKED");
+    expect(server.store.products).toHaveLength(0);
+  });
 });
