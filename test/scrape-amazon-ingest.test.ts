@@ -145,6 +145,20 @@ describe("GET /api/scrape (amazon ingestion pipeline)", () => {
     expect(body.product.dedup_key).toBe(`amazon:${ASIN}`);
   });
 
+  it("scrapes a slug-prefixed amazon.sa /dp/<ASIN> URL with the same ASIN identity", async () => {
+    server = createMockPostgrest();
+    const saUrl = `https://www.amazon.sa/West-M200-Nano-Technology-Bluetooth-Energy-Efficient/dp/${ASIN}`;
+    vi.stubGlobal(
+      "fetch",
+      compositeFetch(server, productPageHtml().replace(PRODUCT_URL, saUrl)),
+    );
+
+    const res = await get(`/api/scrape?url=${encodeURIComponent(saUrl)}`);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { product: { dedup_key: string } };
+    expect(body.product.dedup_key).toBe(`amazon:${ASIN}`);
+  });
+
   it("returns 503 SUPABASE_NOT_CONFIGURED when supabase bindings are missing", async () => {
     server = createMockPostgrest();
     vi.stubGlobal("fetch", compositeFetch(server, productPageHtml()));

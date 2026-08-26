@@ -92,7 +92,7 @@ describe("Amazon host and URL handling", () => {
     expect(isAmazonHost("www.amazon.com")).toBe(true);
     expect(isAmazonHost("amazon.com")).toBe(true);
     expect(isAmazonHost("smile.amazon.com")).toBe(true);
-    for (const domain of ["amazon.co.uk", "amazon.de", "amazon.fr", "amazon.it", "amazon.es", "amazon.ca"]) {
+    for (const domain of ["amazon.co.uk", "amazon.de", "amazon.fr", "amazon.it", "amazon.es", "amazon.ca", "amazon.sa"]) {
       expect(isAmazonHost(domain)).toBe(true);
       expect(isAmazonHost(`www.${domain}`)).toBe(true);
     }
@@ -121,9 +121,12 @@ describe("Amazon host and URL handling", () => {
     expect(extractAsinFromPathname(`/exec/obidos/asin/${ASIN}`)).toBe(ASIN);
     expect(extractAsinFromPathname(`/dp/${ASIN}/ref=sr_1_1`)).toBe(ASIN);
     expect(extractAsinFromPathname(`/dp/${ASIN}/`)).toBe(ASIN);
+    expect(extractAsinFromPathname(`/West-M200-Nano-Technology-Bluetooth-Energy-Efficient/dp/${ASIN}`)).toBe(ASIN);
+    expect(extractAsinFromPathname(`/West-M200-Nano-Technology-Bluetooth-Energy-Efficient/dp/${ASIN}/ref=sr_1_1`)).toBe(ASIN);
     expect(extractAsinFromPathname("/dp/b0b1234567")).toBe("B0B1234567");
     expect(isAmazonProductPath(`/dp/${ASIN}`)).toBe(true);
     expect(isAmazonProductPath(`/gp/product/${ASIN}`)).toBe(true);
+    expect(isAmazonProductPath(`/West-M200-Nano-Technology-Bluetooth-Energy-Efficient/dp/${ASIN}`)).toBe(true);
   });
 
   it("extractAsinFromPathname rejects invalid ASINs and non-product paths", () => {
@@ -157,6 +160,9 @@ describe("amazonScraper supports", () => {
       [`https://www.amazon.it/dp/${ASIN}`, true],
       [`https://www.amazon.es/dp/${ASIN}`, true],
       [`https://www.amazon.ca/dp/${ASIN}`, true],
+      [`https://www.amazon.sa/dp/${ASIN}`, true],
+      [`https://www.amazon.sa/West-M200-Nano-Technology-Bluetooth-Energy-Efficient/dp/${ASIN}`, true],
+      [`https://www.amazon.sa/West-M200-Nano-Technology-Bluetooth-Energy-Efficient/dp/${ASIN}?language=en_AE`, true],
       ["https://www.amazon.com/gp/product/XYZ", false],
       ["https://www.amazon.com/b/?node=1", false],
       ["https://www.amazon.com/gp/help/customer/display.html", false],
@@ -314,11 +320,51 @@ describe("parseAmazonPage (fallbacks)", () => {
       ["www.amazon.it", "EUR"],
       ["www.amazon.es", "EUR"],
       ["www.amazon.ca", "CAD"],
+      ["www.amazon.sa", "SAR"],
     ] as const) {
       expect(currencyForHost(hostname)).toBe(currency);
     }
     expect(currencyForHost("evil.com")).toBeUndefined();
     expect(currencyForHost(undefined)).toBeUndefined();
+  });
+});
+
+describe("parseAmazonPage (Amazon.sa)", () => {
+  const SA_URL = `https://www.amazon.sa/West-M200-Nano-Technology-Bluetooth-Energy-Efficient/dp/${ASIN}`;
+
+  it("parses a slug-prefixed /dp/<ASIN> page and derives the ASIN from the canonical path", () => {
+    const html = productPageHtml({
+      canonical: SA_URL,
+      ld: [
+        {
+          "@context": "https://schema.org",
+          "@type": "Product",
+          name: "West M200 Nano Technology Bluetooth Energy Efficient",
+          offers: {
+            "@type": "Offer",
+            price: "129.00",
+            priceCurrency: "SAR",
+            availability: "https://schema.org/InStock",
+          },
+        },
+      ],
+    });
+    const parsed = parseAmazonPage(html, { url: new URL(SA_URL) });
+
+    expect(parsed.asin).toBe(ASIN);
+    expect(parsed.title).toBe("West M200 Nano Technology Bluetooth Energy Efficient");
+    expect(parsed.price).toEqual({ amount: 129, currency: "SAR" });
+    expect(parsed.availability).toBe(true);
+  });
+
+  it("falls back to SAR from the amazon.sa host when JSON-LD has no currency", () => {
+    const html = productPageHtml({
+      canonical: SA_URL,
+      ld: [{ "@type": "Product", name: "SAR Fallback Product", offers: { "@type": "Offer", price: "89.50" } }],
+    });
+    const parsed = parseAmazonPage(html);
+    expect(parsed.asin).toBe(ASIN);
+    expect(parsed.price).toEqual({ amount: 89.5, currency: "SAR" });
   });
 });
 

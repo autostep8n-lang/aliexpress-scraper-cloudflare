@@ -64,8 +64,8 @@ export interface AmazonParseHint {
 /** Amazon ASIN: exactly 10 uppercase alphanumeric characters. */
 const ASIN_RE = /^[A-Z0-9]{10}$/;
 
-/** Product page path prefixes: `/dp/<ASIN>`, `/gp/product/<ASIN>`, ... */
-const AMAZON_PRODUCT_PATH_RE = /^\/(?:dp|gp\/product|gp\/aw\/d|exec\/obidos\/asin)\/([A-Za-z0-9]{10})(?:\/|$)/;
+/** Product page path prefixes: `/dp/<ASIN>`, `/{slug}/dp/<ASIN>`, `/gp/product/<ASIN>`, ... */
+const AMAZON_PRODUCT_PATH_RE = /(?:^|\/)(?:dp|gp\/product|gp\/aw\/d|exec\/obidos\/asin)\/([A-Za-z0-9]{10})(?:$|\/)/;
 
 /** True for product page paths carrying a (possibly lowercase) ASIN segment. */
 export function isAmazonProductPath(pathname: string): boolean {
@@ -88,6 +88,7 @@ const CURRENCY_BY_DOMAIN: Record<string, string> = {
   "amazon.it": "EUR",
   "amazon.es": "EUR",
   "amazon.ca": "CAD",
+  "amazon.sa": "SAR",
 };
 
 /** Deterministic currency for a supported Amazon host (USD when unknown). */
