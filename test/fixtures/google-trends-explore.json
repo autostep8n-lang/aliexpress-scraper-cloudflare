@@ -1,0 +1,47 @@
+{
+  "widgets": [
+    {
+      "id": "TIMESERIES",
+      "title": "Interest over time",
+      "type": "LINE_CHART",
+      "request": {
+        "time": "today 5-y",
+        "resolution": "MONTH",
+        "locale": "en-US",
+        "comparisonItem": [
+          {
+            "geo": "US",
+            "complexKeywordsRestriction": {
+              "keyword": [{ "type": "BROAD", "value": "smart watch" }]
+            },
+            "time": "today 5-y"
+          }
+        ],
+        "requestOptions": { "property": "", "backend": "trends", "category": 0 }
+      },
+      "token": "v2-explore-token-1"
+    },
+    {
+      "id": "GEO_MAP",
+      "title": "Interest by subregion",
+      "type": "GEO_MAP",
+      "request": {
+        "time": "today 5-y",
+        "resolution": "REGION",
+        "locale": "en-US",
+        "comparisonItem": [
+          {
+            "geo": "US",
+            "complexKeywordsRestriction": {
+              "keyword": [{ "type": "BROAD", "value": "smart watch" }]
+            },
+            "time": "today 5-y"
+          }
+        ],
+        "requestOptions": { "property": "", "backend": "trends", "category": 0 }
+      },
+      "token": "v2-explore-token-2"
+    }
+  ],
+  "cookie": "NID=511=eKb-1v2_abcdefghijklmnopqrstuvwxyz-3_9"
+}

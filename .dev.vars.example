@@ -15,3 +15,8 @@ SUPABASE_SECRET_KEY=<your-secret-key>
 # mtop gateway, which needs no API key.
 # ALIEXPRESS_OPENAPI_KEY=<your-app-key>
 # ALIEXPRESS_OPENAPI_SECRET=<your-app-secret>
+
+# Optional (non-secret): Google Trends provider selector. The default
+# "internal-api" provider talks to Google's undocumented internal endpoints and
+# needs no credentials. Leave unset for the default.
+# GOOGLE_TRENDS_PROVIDER=internal-api

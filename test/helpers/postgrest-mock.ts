@@ -62,6 +62,11 @@ const TABLE_DEFAULTS: Record<string, Record<string, unknown>> = {
     last_seen_at: "2026-08-18T00:00:00.000Z",
     last_scraped_at: null,
   },
+  google_trends: {
+    category: null,
+    captured_at: "2026-08-18T00:00:00.000Z",
+    metadata: {},
+  },
 };
 
 let idCounter = 0;
@@ -98,6 +103,7 @@ export function createMockPostgrest(): MockPostgrest {
     products: [],
     product_categories: [],
     product_sources: [],
+    google_trends: [],
   };
   const requests: RecordedRequest[] = [];
   const overrides: Override[] = [];
@@ -106,7 +112,7 @@ export function createMockPostgrest(): MockPostgrest {
     const req = new Request(input, init);
     const url = new URL(req.url);
     const method = req.method;
-    const body = method === "POST" || method === "PATCH" ? ((await req.json()) as StoredRow) : undefined;
+    const body = method === "POST" || method === "PATCH" ? await req.json() : undefined;
     requests.push({ method, url: req.url, headers: req.headers, body });
 
     const overrideIndex = overrides.findIndex(
@@ -133,22 +139,29 @@ export function createMockPostgrest(): MockPostgrest {
     }
 
     if (method === "POST") {
+      const rows = Array.isArray(body) ? body : [body];
       const onConflict = (url.searchParams.get("on_conflict") ?? "").split(",").map((column) => column.trim());
       const conflictColumns = onConflict.length > 0 && onConflict[0] ? onConflict : ["id"];
-      const existing = (store[table] ?? []).find((row) => conflictColumns.every((column) => row[column] === body?.[column]));
-      let created: boolean;
-      if (existing) {
-        Object.assign(existing, body);
-        created = false;
-      } else {
-        const row: StoredRow = { id: nextId(), ...body };
-        store[table].push(row);
-        created = true;
+      let anyCreated = false;
+      const results: StoredRow[] = [];
+      for (const row of rows) {
+        const existing = (store[table] ?? []).find((candidate) =>
+          conflictColumns.every((column) => candidate[column] === row?.[column]),
+        );
+        if (existing) {
+          Object.assign(existing, row);
+          results.push(existing);
+        } else {
+          const stored: StoredRow = { id: nextId(), ...row };
+          store[table].push(stored);
+          results.push(stored);
+          anyCreated = true;
+        }
       }
       const select = url.searchParams.get("select") ?? "*";
-      const projected = project(existing ?? (store[table][store[table].length - 1] as StoredRow), select, table);
-      return new Response(JSON.stringify([projected]), {
-        status: created ? 201 : 200,
+      const projected = results.map((row) => project(row, select, table));
+      return new Response(JSON.stringify(projected), {
+        status: anyCreated ? 201 : 200,
         headers: { "content-type": "application/json" },
       });
     }

@@ -21,6 +21,7 @@ const EXPECTED_TABLES = [
   "product_suppliers",
   "scores",
   "product_categories",
+  "google_trends",
 ] as const;
 
 const EXPECTED_MIGRATIONS = [
@@ -34,6 +35,7 @@ const EXPECTED_MIGRATIONS = [
   "20260817000008_rls.sql",
   "20260817000009_seed_sources.sql",
   "20260817000010_integrity_hardening.sql",
+  "20260817000011_google_trends.sql",
 ] as const;
 
 describe("Supabase migrations", () => {

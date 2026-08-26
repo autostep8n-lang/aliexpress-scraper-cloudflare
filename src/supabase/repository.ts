@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env";
 import type { Product, ProductCategory } from "../products/types";
+import type { GoogleTrendsObservationRow, GoogleTrendsPersistedRow } from "../market/types";
 import { validateProduct } from "../products/validation";
 import { getSupabaseClient } from "./client";
 import { longestToken } from "../matching/normalize";
@@ -99,6 +100,10 @@ const PRODUCT_SELECT =
   "id, dedup_key, canonical_url, title, description, brand, category_id, primary_image_url, images, attributes, availability_status, lifecycle_status, last_seen_at";
 const OBSERVATION_SELECT =
   "id, product_id, source_id, external_id, url, title, description, brand, category_id, image_urls, price, original_price, currency, shipping, rating_average, rating_count, available, attributes, raw, last_seen_at, last_scraped_at";
+const GOOGLE_TRENDS_SELECT =
+  "id, source_id, keyword, geo, property, category, time_range, period_start, period_end, value, captured_at, metadata, created_at, updated_at";
+const GOOGLE_TRENDS_SOURCE_SLUG = "google-trends";
+const GOOGLE_TRENDS_CONFLICT = "source_id,keyword,geo,property,time_range,period_start";
 
 /**
  * Ingests one already-normalized Phase 1 `Product` into the P0.2 schema.
@@ -280,6 +285,98 @@ export async function getObservation(
     return { status: "found", data };
   } catch (err) {
     return { status: "error", code: "observation_lookup_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Bulk-upserts Google Trends observations (P3.1 market intelligence).
+ *
+ * Rows carry `source_id: null`; the source row for `google-trends` (kind
+ * `api`) is resolved idempotently and backfilled. Deduplication is on
+ * `(source_id, keyword, geo, property, time_range, period_start)`: a re-collect
+ * of the same bucket replaces the value rather than appending a duplicate.
+ *
+ * Because PostgREST reports a single status for a bulk upsert (201 if any row
+ * was inserted, 200 if all were updated), `created`/`updated` describe the
+ * overall outcome; callers that need per-row counts would need an extra
+ * round-trip. Never throws.
+ */
+export async function upsertGoogleTrends(
+  env: Env,
+  rows: GoogleTrendsObservationRow[],
+): Promise<RepositoryResult<GoogleTrendsPersistedRow[]>> {
+  if (rows.length === 0) {
+    return { status: "updated", data: [] };
+  }
+
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  const source = await ensureGoogleTrendsSource(client);
+  if (source.status === "error") {
+    return { status: "error", code: source.code, message: source.message };
+  }
+
+  const payload = rows.map((row) => ({ ...row, source_id: source.data.id }));
+
+  try {
+    const { data, error, status } = await client
+      .from("google_trends")
+      .upsert(payload, { onConflict: GOOGLE_TRENDS_CONFLICT })
+      .select(GOOGLE_TRENDS_SELECT);
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "google_trends_upsert_failed",
+        message: errorMessage(error, "failed to upsert google trends observations"),
+      };
+    }
+    return {
+      status: status === 201 ? "created" : "updated",
+      data: data as GoogleTrendsPersistedRow[],
+    };
+  } catch (err) {
+    return { status: "error", code: "google_trends_upsert_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Resolves the `google-trends` source row (kind `api`). Reads first; creates
+ * idempotently via an upsert keyed on the unique `slug` so concurrent calls
+ * never conflict. Separate from `ensureSource` because market-intelligence
+ * sources are `api`-kind, not `platform`-kind.
+ */
+async function ensureGoogleTrendsSource(client: SupabaseClient): Promise<StepResult<PersistedSourceRecord>> {
+  try {
+    const { data, error } = await client
+      .from("sources")
+      .select(SOURCE_SELECT)
+      .eq("slug", GOOGLE_TRENDS_SOURCE_SLUG)
+      .maybeSingle();
+    if (error) {
+      return { status: "error", code: "source_lookup_failed", message: errorMessage(error, "failed to look up source") };
+    }
+    if (data) {
+      return { status: "ok", data, created: false };
+    }
+  } catch (err) {
+    return { status: "error", code: "source_lookup_failed", message: toString(err) };
+  }
+
+  try {
+    const { data, error, status } = await client
+      .from("sources")
+      .upsert({ slug: GOOGLE_TRENDS_SOURCE_SLUG, name: "Google Trends", kind: "api" }, { onConflict: "slug" })
+      .select(SOURCE_SELECT)
+      .maybeSingle();
+    if (error || !data) {
+      return { status: "error", code: "source_create_failed", message: errorMessage(error, "failed to create source") };
+    }
+    return { status: "ok", data, created: status === 201 };
+  } catch (err) {
+    return { status: "error", code: "source_create_failed", message: toString(err) };
   }
 }
 

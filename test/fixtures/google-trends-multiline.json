@@ -1,0 +1,46 @@
+{
+  "default": {
+    "averages": [46],
+    "resolution": "MONTH",
+    "timeData": [],
+    "timelineData": [
+      {
+        "time": "1759449600000",
+        "formattedTime": "Oct 2025",
+        "formattedAxisTime": "Oct 2025",
+        "value": [100],
+        "hasData": [true]
+      },
+      {
+        "time": "1762128000000",
+        "formattedTime": "Nov 2025",
+        "formattedAxisTime": "Nov 2025",
+        "value": [82],
+        "hasData": [true]
+      },
+      {
+        "time": "1764720000000",
+        "formattedTime": "Dec 2025",
+        "formattedAxisTime": "Dec 2025",
+        "value": [64],
+        "hasData": [true]
+      },
+      {
+        "time": "1767398400000",
+        "formattedTime": "Jan 2026",
+        "formattedAxisTime": "Jan 2026",
+        "value": [71],
+        "hasData": [true]
+      },
+      {
+        "time": "1769817600000",
+        "formattedTime": "Feb 2026",
+        "formattedAxisTime": "Feb 2026",
+        "value": [55],
+        "hasData": [true]
+      }
+    ],
+    "totals": [100],
+    "userInterest": 0
+  }
+}

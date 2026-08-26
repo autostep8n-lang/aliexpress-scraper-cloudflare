@@ -31,4 +31,11 @@ export interface Env {
    */
   ALIEXPRESS_OPENAPI_KEY?: string;
   ALIEXPRESS_OPENAPI_SECRET?: string;
+  /**
+   * Optional Google Trends provider selector (non-secret). Defaults to
+   * `"internal-api"` (the Cloudflare-native provider that talks to Google's
+   * undocumented internal endpoints). Set to an approved provider name only
+   * when such a provider is registered. See `src/market/google-trends.ts`.
+   */
+  GOOGLE_TRENDS_PROVIDER?: string;
 }
