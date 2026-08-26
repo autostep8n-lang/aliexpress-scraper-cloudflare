@@ -176,7 +176,7 @@ describe("internalApiTrendsProvider.fetchSignals", () => {
     vi.stubGlobal(
       "fetch",
       trendsRouter(server, {
-        exploreHandler: (url, init) => {
+        exploreHandler: (url) => {
           seen.push({ path: url.pathname });
           return jsonResponse(EXPLORE_FIXTURE);
         },
@@ -222,14 +222,22 @@ describe("internalApiTrendsProvider.fetchSignals", () => {
 
   it("follows same-host redirects", async () => {
     server = createMockPostgrest();
+    let redirected = false;
     vi.stubGlobal(
       "fetch",
       trendsRouter(server, {
-        explore: redirectResponse("https://trends.google.com/trends/api/explore?hl=en-US"),
+        exploreHandler: () => {
+          if (!redirected) {
+            redirected = true;
+            return redirectResponse("https://trends.google.com/trends/api/explore?hl=en-US");
+          }
+          return jsonResponse(EXPLORE_FIXTURE);
+        },
       }),
     );
 
     const signals = await internalApiTrendsProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx);
+    expect(redirected).toBe(true);
     expect(signals.length).toBeGreaterThan(0);
   });
 

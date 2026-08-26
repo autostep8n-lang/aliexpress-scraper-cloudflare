@@ -26,6 +26,14 @@ import { jsonError, jsonOk } from "../utils/http";
  *   `HTTP_ERROR`, `INVALID_PAYLOAD`, ...)
  * - 503 `SUPABASE_NOT_CONFIGURED` when Supabase bindings are missing
  */
+const VALIDATION_CODES = new Set([
+  "INVALID_KEYWORD",
+  "INVALID_GEO",
+  "INVALID_TIME_RANGE",
+  "INVALID_PROPERTY",
+  "INVALID_CATEGORY",
+]);
+
 export async function handleGoogleTrends(
   request: Request,
   env: Env,
@@ -61,7 +69,7 @@ export async function handleGoogleTrends(
     result = await module.collect(query, env, ctx);
   } catch (err) {
     if (err instanceof MarketError) {
-      return jsonError(502, err.message, err.code, requestId);
+      return jsonError(VALIDATION_CODES.has(err.code) ? 400 : 502, err.message, err.code, requestId);
     }
     throw err;
   }

@@ -36,7 +36,7 @@ create unique index google_trends_dedup_uidx
 
 alter table public.google_trends
   add constraint google_trends_geo_format_check
-  check (geo ~ '^(WORLD|[A-Z]{2}(-[A-Z]{2})?)$');
+  check (geo ~ '^(WORLD|[A-Z]{2}(-[A-Z]{2,3})?)$');
 
 alter table public.google_trends
   add constraint google_trends_property_check

@@ -22,7 +22,7 @@ import {
 const DEFAULT_TIME_RANGE = "today 5-y";
 const DEFAULT_PROPERTY: GoogleTrendsProperty = "web";
 const KEYWORD_MAX_LENGTH = 200;
-const GEO_PATTERN = /^[A-Z]{2}(-[A-Z]{2})?$/;
+const GEO_PATTERN = /^[A-Z]{2}(-[A-Z]{2,3})?$/;
 const CUSTOM_TIME_RANGE_PATTERN = /^\d{4}-\d{2}-\d{2}\s\d{4}-\d{2}-\d{2}$/;
 
 /** Default `periodEnd` span used when a series has fewer than two points. */
