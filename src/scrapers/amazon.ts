@@ -24,7 +24,7 @@ const MAX_REDIRECTS = 5;
 const CACHE_TTL_SECONDS = 60 * 60;
 const CACHE_PREFIX = "scrape:amazon:";
 
-const AMAZON_TLD_DOMAINS = ["amazon.co.uk", "amazon.de", "amazon.fr", "amazon.it", "amazon.es", "amazon.ca"];
+const AMAZON_TLD_DOMAINS = ["amazon.co.uk", "amazon.de", "amazon.fr", "amazon.it", "amazon.es", "amazon.ca", "amazon.sa"];
 
 /** True for amazon.com and any of its subdomains (www., smile., ...). */
 export function isAmazonCom(hostname: string): boolean {
