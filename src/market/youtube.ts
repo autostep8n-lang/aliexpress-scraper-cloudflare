@@ -211,7 +211,7 @@ export function buildVideosUrl(ids: string[], apiKey: string): URL {
   return url;
 }
 
-async function fetchJson(url: URL, env: Env, label: string): Promise<Record<string, unknown>> {
+async function fetchJson(url: URL, _env: Env, label: string): Promise<Record<string, unknown>> {
   const response = await fetchWithRedirects(url, {
     headers: {
       accept: "application/json",

@@ -35,7 +35,9 @@
   - 67/67 focused P3.1 tests and 582/582 full-suite tests passing; typecheck, build and `git diff --check` clean; commit `3bc0461`.
 - **P3.2 — Reddit Intelligence: DONE**
   - Implemented and merged as PR #1; implementation commit `b6ac2dc`, merge commit `324962b`.
-- **Next task: P3.3 — YouTube Signals**
+- **P3.3 — YouTube Signals: DONE**
+  - Cloudflare-native YouTube provider (`search.list` + `videos.list`) + deterministic engine + `youtube_signals` persistence under `src/market/`; wired through `GET /api/market/youtube`; implementation commit `978aca8`.
+- **Next task: P3.4 — Instagram Signals**
 
 ## P0 — Foundation
 
@@ -73,7 +75,7 @@
 |---|---|---|---|
 | 16 | Google Trends | DONE | Completed as P3.1; commit `3bc0461`, `GET /api/market/google-trends`, provider abstraction + persistence in `src/market/` |
 | 17 | Reddit Intelligence | DONE | Implemented and merged as PR #1; implementation commit `b6ac2dc`, merge commit `324962b` |
-| 18 | YouTube Signals | TODO | Not started |
+| 18 | YouTube Signals | DONE | Completed as P3.3; implementation commit `978aca8`, `GET /api/market/youtube`, provider + engine + persistence in `src/market/youtube*.ts` |
 | 19 | Instagram Signals | TODO | Not started |
 | 20 | Facebook Signals | TODO | Not started |
 | 21 | Pinterest Signals | TODO | Not started |

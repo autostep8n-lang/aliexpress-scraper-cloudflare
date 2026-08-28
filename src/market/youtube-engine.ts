@@ -71,7 +71,7 @@ export function normalizeYouTubeQuery(query: YouTubeQuery): NormalizedYouTubeQue
  */
 export function parseYouTubeSearchResponse(
   payload: unknown,
-  query: NormalizedYouTubeQuery,
+  _query: NormalizedYouTubeQuery,
 ): YouTubeSearchResult {
   const root = asRecord(payload);
   if (!root) {
