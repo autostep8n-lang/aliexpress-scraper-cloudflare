@@ -52,4 +52,12 @@ export interface Env {
    * descriptive `User-Agent`). Defaults to a project-specific string.
    */
   REDDIT_USER_AGENT?: string;
+  /**
+   * Optional YouTube Data API v3 key (console.cloud.google.com, "YouTube Data
+   * API v3" enabled). When set, the YouTube market-intelligence module
+   * collects via the official `www.googleapis.com` API. Without it the
+   * provider degrades with a typed `YOUTUBE_NOT_CONFIGURED` error. Set as a
+   * secret, never committed. See `src/market/youtube.ts`.
+   */
+  YOUTUBE_API_KEY?: string;
 }

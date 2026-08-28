@@ -1,5 +1,6 @@
 import { googleTrendsModule } from "./google-trends";
 import { redditModule } from "./reddit";
+import { youtubeModule } from "./youtube";
 import type { MarketIntelligenceModule } from "./types";
 
 /**
@@ -12,6 +13,7 @@ import type { MarketIntelligenceModule } from "./types";
 export const marketRegistry: MarketIntelligenceModule<unknown, unknown>[] = [
   googleTrendsModule,
   redditModule,
+  youtubeModule,
 ];
 
 export function registerMarketIntelligence(module: MarketIntelligenceModule<unknown, unknown>): void {

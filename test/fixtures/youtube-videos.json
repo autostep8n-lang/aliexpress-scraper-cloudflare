@@ -1,0 +1,46 @@
+{
+  "kind": "youtube#videoListResponse",
+  "etag": "\"fixture-videos-etag\"",
+  "items": [
+    {
+      "kind": "youtube#video",
+      "etag": "\"fixture-vid1\"",
+      "id": "vid1",
+      "statistics": {
+        "viewCount": "120000",
+        "likeCount": "5400",
+        "commentCount": "980"
+      }
+    },
+    {
+      "kind": "youtube#video",
+      "etag": "\"fixture-vid2\"",
+      "id": "vid2",
+      "statistics": {
+        "viewCount": "95000",
+        "likeCount": "3200",
+        "commentCount": "410"
+      }
+    },
+    {
+      "kind": "youtube#video",
+      "etag": "\"fixture-vid3\"",
+      "id": "vid3",
+      "statistics": {
+        "viewCount": "60000",
+        "likeCount": "2100",
+        "commentCount": "260"
+      }
+    },
+    {
+      "kind": "youtube#video",
+      "etag": "\"fixture-vid4\"",
+      "id": "vid4",
+      "statistics": {
+        "viewCount": "150000",
+        "likeCount": "8100",
+        "commentCount": "1200"
+      }
+    }
+  ]
+}

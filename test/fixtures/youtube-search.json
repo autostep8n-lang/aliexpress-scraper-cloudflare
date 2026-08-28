@@ -1,0 +1,88 @@
+{
+  "kind": "youtube#searchListResponse",
+  "etag": "\"fixture-search-etag\"",
+  "regionCode": "US",
+  "pageInfo": {
+    "totalResults": 1243,
+    "resultsPerPage": 7
+  },
+  "items": [
+    {
+      "kind": "youtube#searchResult",
+      "etag": "\"fixture-1\"",
+      "id": { "kind": "youtube#video", "videoId": "vid1" },
+      "snippet": {
+        "publishedAt": "2025-01-10T00:00:00.000Z",
+        "channelId": "chanA",
+        "title": "Best budget smart watch under $50?",
+        "channelTitle": "TechReviews"
+      }
+    },
+    {
+      "kind": "youtube#searchResult",
+      "etag": "\"fixture-2\"",
+      "id": { "kind": "youtube#video", "videoId": "vid2" },
+      "snippet": {
+        "publishedAt": "2025-01-15T00:00:00.000Z",
+        "channelId": "chanB",
+        "title": "Apple Watch vs Garmin for running",
+        "channelTitle": "RunnerLife"
+      }
+    },
+    {
+      "kind": "youtube#searchResult",
+      "etag": "\"fixture-3\"",
+      "id": { "kind": "youtube#video", "videoId": "vid3" },
+      "snippet": {
+        "publishedAt": "2025-01-20T00:00:00.000Z",
+        "channelId": "chanA",
+        "title": "Smart watch battery life tips",
+        "channelTitle": "TechReviews"
+      }
+    },
+    {
+      "kind": "youtube#searchResult",
+      "etag": "\"fixture-4\"",
+      "id": { "kind": "youtube#video", "videoId": "vid4" },
+      "snippet": {
+        "publishedAt": "2025-02-01T00:00:00.000Z",
+        "channelId": "chanC",
+        "title": "Top 5 smart watches 2026",
+        "channelTitle": "GadgetLab"
+      }
+    },
+    {
+      "kind": "youtube#searchResult",
+      "etag": "\"fixture-5\"",
+      "id": { "kind": "youtube#video", "videoId": "vid5" },
+      "snippet": {
+        "publishedAt": "2025-02-05T00:00:00.000Z",
+        "channelId": "chanZ",
+        "title": "",
+        "channelTitle": "Spam"
+      }
+    },
+    {
+      "kind": "youtube#searchResult",
+      "etag": "\"fixture-6\"",
+      "id": { "kind": "youtube#channel", "channelId": "chanC" },
+      "snippet": {
+        "publishedAt": "2025-02-06T00:00:00.000Z",
+        "channelId": "chanC",
+        "title": "A channel that is not a video",
+        "channelTitle": "GadgetLab"
+      }
+    },
+    {
+      "kind": "youtube#searchResult",
+      "etag": "\"fixture-7\"",
+      "id": { "kind": "youtube#video", "videoId": "vid7" },
+      "snippet": {
+        "publishedAt": "not-a-timestamp",
+        "channelId": "chanD",
+        "title": "Bad publish date is skipped",
+        "channelTitle": "OldUploads"
+      }
+    }
+  ]
+}

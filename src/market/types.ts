@@ -293,3 +293,166 @@ export interface RedditProvider {
   readonly name: string;
   fetchSignals(query: NormalizedRedditQuery, env: Env, ctx: ExecutionContext): Promise<RedditSignal[]>;
 }
+
+// ============================================================================
+// P3.3 - YouTube market intelligence.
+// ============================================================================
+
+/**
+ * YouTube search ordering (mirrors the YouTube Data API `order` parameter).
+ * Only the orderings meaningful for a video search are exposed.
+ */
+export type YouTubeOrder = "relevance" | "date" | "rating" | "viewCount";
+
+export const YOUTUBE_ORDERS: readonly YouTubeOrder[] = ["relevance", "date", "rating", "viewCount"];
+
+/**
+ * Relative recency window applied via the YouTube Data API `publishedAfter`
+ * filter. `any` leaves the search window unrestricted.
+ */
+export type YouTubePublishedWithin = "any" | "hour" | "day" | "week" | "month" | "year";
+
+export const YOUTUBE_PUBLISHED_WITHIN: readonly YouTubePublishedWithin[] = [
+  "any",
+  "hour",
+  "day",
+  "week",
+  "month",
+  "year",
+];
+
+/** Raw, untrusted query input. Every field is `unknown` until normalized. */
+export interface YouTubeQuery {
+  keyword?: unknown;
+  limit?: unknown;
+  order?: unknown;
+  publishedWithin?: unknown;
+}
+
+/** Validated and normalized YouTube query. */
+export interface NormalizedYouTubeQuery {
+  keyword: string;
+  limit: number;
+  order: YouTubeOrder;
+  publishedWithin: YouTubePublishedWithin;
+}
+
+/**
+ * One video as reported by the YouTube search `snippet` part (no engagement
+ * statistics yet; those come from a separate `videos.list` call).
+ */
+export interface YouTubeVideoMeta {
+  id: string;
+  title: string;
+  channelId: string;
+  channelTitle: string;
+  publishedAt: string;
+}
+
+/** Engagement counters for a video from the `videos.list` `statistics` part. */
+export interface YouTubeVideoStatistics {
+  viewCount: number;
+  likeCount: number | null;
+  commentCount: number | null;
+}
+
+/** A parsed YouTube search response: total matches plus the video metadata. */
+export interface YouTubeSearchResult {
+  videoCount: number;
+  items: YouTubeVideoMeta[];
+}
+
+/** One normalized video from a YouTube search result (evidence for a signal). */
+export interface YouTubeVideo {
+  id: string;
+  title: string;
+  channelId: string;
+  channelTitle: string;
+  publishedAt: string;
+  viewCount: number;
+  likeCount: number | null;
+  commentCount: number | null;
+  url: string;
+}
+
+/**
+ * One YouTube signal: a keyword-level snapshot aggregated from the top search
+ * results for a keyword. `videoCount` is the API-reported total matching
+ * videos (an approximation), `totalViews`/`totalLikes`/`totalComments` sum the
+ * engagement of the fetched videos, and `topChannel` is the channel with the
+ * most fetched videos.
+ */
+export interface YouTubeSignal {
+  keyword: string;
+  limit: number;
+  order: YouTubeOrder;
+  publishedWithin: YouTubePublishedWithin;
+  videoCount: number;
+  totalViews: number;
+  totalLikes: number;
+  totalComments: number;
+  avgViews: number | null;
+  channelCount: number;
+  topChannel: string | null;
+  videos: YouTubeVideo[];
+  capturedAt: string;
+}
+
+/**
+ * Row shape matching the `youtube_signals` schema (migration
+ * 20260817000013). `source_id` is resolved and filled by the repository.
+ */
+export interface YouTubeObservationRow {
+  source_id: string | null;
+  keyword: string;
+  result_limit: number;
+  order_by: YouTubeOrder;
+  published_within: YouTubePublishedWithin;
+  video_count: number;
+  total_views: number;
+  total_likes: number;
+  total_comments: number;
+  avg_views: number | null;
+  channel_count: number;
+  top_video_id: string | null;
+  top_video_title: string | null;
+  top_channel: string | null;
+  captured_at: string;
+  metadata: Record<string, unknown>;
+}
+
+/**
+ * A persisted `youtube_signals` row as read back from the database: the
+ * observation fields plus storage-generated columns.
+ */
+export interface YouTubePersistedRow {
+  id: string;
+  source_id: string;
+  keyword: string;
+  result_limit: number;
+  order_by: YouTubeOrder;
+  published_within: YouTubePublishedWithin;
+  video_count: number;
+  total_views: number;
+  total_likes: number;
+  total_comments: number;
+  avg_views: number | null;
+  channel_count: number;
+  top_video_id: string | null;
+  top_video_title: string | null;
+  top_channel: string | null;
+  captured_at: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Provider abstraction for acquiring YouTube data. Implementations turn a
+ * normalized query into normalized signals regardless of the underlying
+ * acquisition mechanism (today the official YouTube Data API v3).
+ */
+export interface YouTubeProvider {
+  readonly name: string;
+  fetchSignals(query: NormalizedYouTubeQuery, env: Env, ctx: ExecutionContext): Promise<YouTubeSignal[]>;
+}

@@ -1,7 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env";
 import type { Product, ProductCategory } from "../products/types";
-import type { GoogleTrendsObservationRow, GoogleTrendsPersistedRow, RedditObservationRow, RedditPersistedRow } from "../market/types";
+import type {
+  GoogleTrendsObservationRow,
+  GoogleTrendsPersistedRow,
+  RedditObservationRow,
+  RedditPersistedRow,
+  YouTubeObservationRow,
+  YouTubePersistedRow,
+} from "../market/types";
 import { validateProduct } from "../products/validation";
 import { getSupabaseClient } from "./client";
 import { longestToken } from "../matching/normalize";
@@ -108,6 +115,10 @@ const REDDIT_SELECT =
   "id, source_id, keyword, result_limit, sort, time_filter, mentions, total_score, total_comments, avg_score, subreddit_count, top_subreddit, captured_at, metadata, created_at, updated_at";
 const REDDIT_SOURCE_SLUG = "reddit";
 const REDDIT_CONFLICT = "source_id,keyword";
+const YOUTUBE_SELECT =
+  "id, source_id, keyword, result_limit, order_by, published_within, video_count, total_views, total_likes, total_comments, avg_views, channel_count, top_video_id, top_video_title, top_channel, captured_at, metadata, created_at, updated_at";
+const YOUTUBE_SOURCE_SLUG = "youtube";
+const YOUTUBE_CONFLICT = "source_id,keyword,order_by,published_within";
 
 /**
  * Ingests one already-normalized Phase 1 `Product` into the P0.2 schema.
@@ -465,6 +476,104 @@ async function ensureRedditSource(client: SupabaseClient): Promise<StepResult<Pe
     const { data, error, status } = await client
       .from("sources")
       .upsert({ slug: REDDIT_SOURCE_SLUG, name: "Reddit", kind: "api" }, { onConflict: "slug" })
+      .select(SOURCE_SELECT)
+      .maybeSingle();
+    if (error || !data) {
+      return { status: "error", code: "source_create_failed", message: errorMessage(error, "failed to create source") };
+    }
+    return { status: "ok", data, created: status === 201 };
+  } catch (err) {
+    return { status: "error", code: "source_create_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Bulk-upserts YouTube market-intelligence signals (P3.3).
+ *
+ * Rows carry `source_id: null`; the source row for `youtube` is resolved
+ * idempotently and backfilled. Unlike Reddit/Google Trends, the `youtube`
+ * source already exists as a `platform`-kind row seeded by migration
+ * 20260817000009, so the read-first lookup normally just reuses it (no new row
+ * is created). Deduplication is on
+ * `(source_id, keyword, order_by, published_within)`: a re-collect of the same
+ * keyword with the same sort/recency replaces the snapshot rather than
+ * appending a duplicate (one snapshot per keyword per sort/recency).
+ *
+ * Because PostgREST reports a single status for a bulk upsert (201 if any row
+ * was inserted, 200 if all were updated), `created`/`updated` describe the
+ * overall outcome; callers that need per-row counts would need an extra
+ * round-trip. Never throws.
+ */
+export async function upsertYouTubeSignals(
+  env: Env,
+  rows: YouTubeObservationRow[],
+): Promise<RepositoryResult<YouTubePersistedRow[]>> {
+  if (rows.length === 0) {
+    return { status: "updated", data: [] };
+  }
+
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  const source = await ensureYouTubeSource(client);
+  if (source.status === "error") {
+    return { status: "error", code: source.code, message: source.message };
+  }
+
+  const payload = rows.map((row) => ({ ...row, source_id: source.data.id }));
+
+  try {
+    const { data, error, status } = await client
+      .from("youtube_signals")
+      .upsert(payload, { onConflict: YOUTUBE_CONFLICT })
+      .select(YOUTUBE_SELECT);
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "youtube_signals_upsert_failed",
+        message: errorMessage(error, "failed to upsert youtube signals"),
+      };
+    }
+    return {
+      status: status === 201 ? "created" : "updated",
+      data: data as YouTubePersistedRow[],
+    };
+  } catch (err) {
+    return { status: "error", code: "youtube_signals_upsert_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Resolves the `youtube` source row. The `youtube` source is seeded as a
+ * `platform`-kind row by migration 20260817000009, so this normally reads and
+ * reuses it. When it is missing (fresh environments, tests) it is created
+ * idempotently via an upsert keyed on the unique `slug` so concurrent calls
+ * never conflict. Separate from `ensureSource` because market-intelligence
+ * sources follow the Reddit/Google Trends read-then-create contract.
+ */
+async function ensureYouTubeSource(client: SupabaseClient): Promise<StepResult<PersistedSourceRecord>> {
+  try {
+    const { data, error } = await client
+      .from("sources")
+      .select(SOURCE_SELECT)
+      .eq("slug", YOUTUBE_SOURCE_SLUG)
+      .maybeSingle();
+    if (error) {
+      return { status: "error", code: "source_lookup_failed", message: errorMessage(error, "failed to look up source") };
+    }
+    if (data) {
+      return { status: "ok", data, created: false };
+    }
+  } catch (err) {
+    return { status: "error", code: "source_lookup_failed", message: toString(err) };
+  }
+
+  try {
+    const { data, error, status } = await client
+      .from("sources")
+      .upsert({ slug: YOUTUBE_SOURCE_SLUG, name: "YouTube", kind: "api" }, { onConflict: "slug" })
       .select(SOURCE_SELECT)
       .maybeSingle();
     if (error || !data) {

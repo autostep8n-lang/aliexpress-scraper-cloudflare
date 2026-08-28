@@ -38,6 +38,24 @@ export {
   redditModule,
 } from "./reddit";
 
+export {
+  buildYouTubeSignal,
+  normalizeYouTubeQuery,
+  parseYouTubeSearchResponse,
+  parseYouTubeVideosResponse,
+  publishedAfterFor,
+  toYouTubeObservationRow,
+} from "./youtube-engine";
+
+export {
+  buildSearchUrl as buildYouTubeSearchUrl,
+  buildVideosUrl,
+  getYouTubeProvider,
+  isYouTubeHost,
+  officialApiYouTubeProvider,
+  youtubeModule,
+} from "./youtube";
+
 export { findMarketIntelligence, marketRegistry, registerMarketIntelligence } from "./registry";
 
 export {
@@ -46,6 +64,8 @@ export {
   MarketError,
   REDDIT_SORTS,
   REDDIT_TIME_FILTERS,
+  YOUTUBE_ORDERS,
+  YOUTUBE_PUBLISHED_WITHIN,
   type GoogleTrendsObservationRow,
   type GoogleTrendsPersistedRow,
   type GoogleTrendsProperty,
@@ -56,6 +76,7 @@ export {
   type MarketIntelligenceModule,
   type NormalizedRedditQuery,
   type NormalizedTrendQuery,
+  type NormalizedYouTubeQuery,
   type RedditObservationRow,
   type RedditPersistedRow,
   type RedditPost,
@@ -64,4 +85,15 @@ export {
   type RedditSignal,
   type RedditSort,
   type RedditTimeFilter,
+  type YouTubeObservationRow,
+  type YouTubeOrder,
+  type YouTubePersistedRow,
+  type YouTubePublishedWithin,
+  type YouTubeProvider,
+  type YouTubeQuery,
+  type YouTubeSearchResult,
+  type YouTubeSignal,
+  type YouTubeVideo,
+  type YouTubeVideoMeta,
+  type YouTubeVideoStatistics,
 } from "./types";
