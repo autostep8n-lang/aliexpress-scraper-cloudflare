@@ -38,4 +38,18 @@ export interface Env {
    * when such a provider is registered. See `src/market/google-trends.ts`.
    */
   GOOGLE_TRENDS_PROVIDER?: string;
+  /**
+   * Optional Reddit OAuth2 app-only credentials (www.reddit.com/prefs/apps,
+   * "script" type). When set, the Reddit market-intelligence module collects
+   * via the official `oauth.reddit.com` API. Without them the provider
+   * degrades with a typed `REDDIT_NOT_CONFIGURED` error. Set as secrets,
+   * never committed. See `src/market/reddit.ts`.
+   */
+  REDDIT_CLIENT_ID?: string;
+  REDDIT_CLIENT_SECRET?: string;
+  /**
+   * Optional descriptive Reddit API user agent (Reddit requires a unique,
+   * descriptive `User-Agent`). Defaults to a project-specific string.
+   */
+  REDDIT_USER_AGENT?: string;
 }

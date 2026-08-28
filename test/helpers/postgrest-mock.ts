@@ -67,6 +67,13 @@ const TABLE_DEFAULTS: Record<string, Record<string, unknown>> = {
     captured_at: "2026-08-18T00:00:00.000Z",
     metadata: {},
   },
+  reddit_signals: {
+    result_limit: 25,
+    avg_score: null,
+    top_subreddit: null,
+    captured_at: "2026-08-18T00:00:00.000Z",
+    metadata: {},
+  },
 };
 
 let idCounter = 0;
@@ -104,6 +111,7 @@ export function createMockPostgrest(): MockPostgrest {
     product_categories: [],
     product_sources: [],
     google_trends: [],
+    reddit_signals: [],
   };
   const requests: RecordedRequest[] = [];
   const overrides: Override[] = [];

@@ -20,3 +20,11 @@ SUPABASE_SECRET_KEY=<your-secret-key>
 # "internal-api" provider talks to Google's undocumented internal endpoints and
 # needs no credentials. Leave unset for the default.
 # GOOGLE_TRENDS_PROVIDER=internal-api
+
+# Optional: Reddit OAuth2 app-only credentials (create a "script" app at
+# https://www.reddit.com/prefs/apps). When set, the Reddit market-intelligence
+# module collects via the official oauth.reddit.com API. Without them it
+# degrades with a typed REDDIT_NOT_CONFIGURED error.
+# REDDIT_CLIENT_ID=<your-app-client-id>
+# REDDIT_CLIENT_SECRET=<your-app-client-secret>
+# REDDIT_USER_AGENT=my-product-intelligence/0.1 (Cloudflare Worker collector)
