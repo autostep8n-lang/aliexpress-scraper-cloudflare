@@ -1,0 +1,89 @@
+{
+  "kind": "Listing",
+  "data": {
+    "after": null,
+    "dist": 4,
+    "modhash": "",
+    "geo_filter": null,
+    "children": [
+      {
+        "kind": "t3",
+        "data": {
+          "id": "abc1",
+          "title": "Best budget smart watch under $50?",
+          "subreddit": "smartwatch",
+          "score": 120,
+          "num_comments": 34,
+          "author": "user_a",
+          "permalink": "/r/smartwatch/comments/abc1/best_budget_smart_watch/",
+          "created_utc": 1735689600
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "abc2",
+          "title": "Apple Watch vs Garmin for running",
+          "subreddit": "running",
+          "score": 95,
+          "num_comments": 51,
+          "author": "user_b",
+          "permalink": "/r/running/comments/abc2/apple_watch_vs_garmin/",
+          "created_utc": 1735776000
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "abc3",
+          "title": "Help: smart watch won't sync",
+          "subreddit": "smartwatch",
+          "score": 45,
+          "num_comments": 12,
+          "author": "user_c",
+          "permalink": "/r/smartwatch/comments/abc3/help_smart_watch_wont_sync/",
+          "created_utc": 1735862400
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "abc4",
+          "title": "",
+          "subreddit": "spam",
+          "score": 999,
+          "num_comments": 0,
+          "author": "deleted",
+          "permalink": "/r/spam/comments/abc4/deleted/",
+          "created_utc": 1735948800
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "abc5",
+          "title": "My smart watch collection",
+          "subreddit": "watches",
+          "score": 30,
+          "num_comments": 8,
+          "author": "user_d",
+          "permalink": "/r/watches/comments/abc5/my_smart_watch_collection/",
+          "created_utc": "not-a-timestamp"
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "abc6",
+          "title": "Smart watch battery life tips",
+          "subreddit": "smartwatch",
+          "score": 60,
+          "num_comments": 20,
+          "author": "user_e",
+          "permalink": "/r/smartwatch/comments/abc6/smart_watch_battery_life_tips/",
+          "created_utc": 1736035200
+        }
+      }
+    ]
+  }
+}

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env";
 import type { Product, ProductCategory } from "../products/types";
-import type { GoogleTrendsObservationRow, GoogleTrendsPersistedRow } from "../market/types";
+import type { GoogleTrendsObservationRow, GoogleTrendsPersistedRow, RedditObservationRow, RedditPersistedRow } from "../market/types";
 import { validateProduct } from "../products/validation";
 import { getSupabaseClient } from "./client";
 import { longestToken } from "../matching/normalize";
@@ -104,6 +104,10 @@ const GOOGLE_TRENDS_SELECT =
   "id, source_id, keyword, geo, property, category, time_range, period_start, period_end, value, captured_at, metadata, created_at, updated_at";
 const GOOGLE_TRENDS_SOURCE_SLUG = "google-trends";
 const GOOGLE_TRENDS_CONFLICT = "source_id,keyword,geo,property,time_range,period_start";
+const REDDIT_SELECT =
+  "id, source_id, keyword, result_limit, sort, time_filter, mentions, total_score, total_comments, avg_score, subreddit_count, top_subreddit, captured_at, metadata, created_at, updated_at";
+const REDDIT_SOURCE_SLUG = "reddit";
+const REDDIT_CONFLICT = "source_id,keyword";
 
 /**
  * Ingests one already-normalized Phase 1 `Product` into the P0.2 schema.
@@ -369,6 +373,98 @@ async function ensureGoogleTrendsSource(client: SupabaseClient): Promise<StepRes
     const { data, error, status } = await client
       .from("sources")
       .upsert({ slug: GOOGLE_TRENDS_SOURCE_SLUG, name: "Google Trends", kind: "api" }, { onConflict: "slug" })
+      .select(SOURCE_SELECT)
+      .maybeSingle();
+    if (error || !data) {
+      return { status: "error", code: "source_create_failed", message: errorMessage(error, "failed to create source") };
+    }
+    return { status: "ok", data, created: status === 201 };
+  } catch (err) {
+    return { status: "error", code: "source_create_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Bulk-upserts Reddit market-intelligence signals (P3.2).
+ *
+ * Rows carry `source_id: null`; the source row for `reddit` (kind `api`) is
+ * resolved idempotently and backfilled. Deduplication is on
+ * `(source_id, keyword)`: a re-collect of the same keyword replaces the
+ * snapshot rather than appending a duplicate (one snapshot per keyword).
+ *
+ * Because PostgREST reports a single status for a bulk upsert (201 if any row
+ * was inserted, 200 if all were updated), `created`/`updated` describe the
+ * overall outcome; callers that need per-row counts would need an extra
+ * round-trip. Never throws.
+ */
+export async function upsertRedditSignals(
+  env: Env,
+  rows: RedditObservationRow[],
+): Promise<RepositoryResult<RedditPersistedRow[]>> {
+  if (rows.length === 0) {
+    return { status: "updated", data: [] };
+  }
+
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  const source = await ensureRedditSource(client);
+  if (source.status === "error") {
+    return { status: "error", code: source.code, message: source.message };
+  }
+
+  const payload = rows.map((row) => ({ ...row, source_id: source.data.id }));
+
+  try {
+    const { data, error, status } = await client
+      .from("reddit_signals")
+      .upsert(payload, { onConflict: REDDIT_CONFLICT })
+      .select(REDDIT_SELECT);
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "reddit_signals_upsert_failed",
+        message: errorMessage(error, "failed to upsert reddit signals"),
+      };
+    }
+    return {
+      status: status === 201 ? "created" : "updated",
+      data: data as RedditPersistedRow[],
+    };
+  } catch (err) {
+    return { status: "error", code: "reddit_signals_upsert_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Resolves the `reddit` source row (kind `api`). Reads first; creates
+ * idempotently via an upsert keyed on the unique `slug` so concurrent calls
+ * never conflict. Separate from `ensureSource` because market-intelligence
+ * sources are `api`-kind, not `platform`-kind.
+ */
+async function ensureRedditSource(client: SupabaseClient): Promise<StepResult<PersistedSourceRecord>> {
+  try {
+    const { data, error } = await client
+      .from("sources")
+      .select(SOURCE_SELECT)
+      .eq("slug", REDDIT_SOURCE_SLUG)
+      .maybeSingle();
+    if (error) {
+      return { status: "error", code: "source_lookup_failed", message: errorMessage(error, "failed to look up source") };
+    }
+    if (data) {
+      return { status: "ok", data, created: false };
+    }
+  } catch (err) {
+    return { status: "error", code: "source_lookup_failed", message: toString(err) };
+  }
+
+  try {
+    const { data, error, status } = await client
+      .from("sources")
+      .upsert({ slug: REDDIT_SOURCE_SLUG, name: "Reddit", kind: "api" }, { onConflict: "slug" })
       .select(SOURCE_SELECT)
       .maybeSingle();
     if (error || !data) {

@@ -83,3 +83,20 @@ binding = "BROWSER"
 # app-registration steps. Without credentials the scraper falls back to the
 # internal mtop gateway, which needs no API key.
 # ============================================================================
+
+# ============================================================================
+# Optional Reddit OAuth2 app-only credentials (www.reddit.com/prefs/apps)
+# ----------------------------------------------------------------------------
+# When present, the Reddit market-intelligence module (/api/market/reddit)
+# collects via the official oauth.reddit.com API. These are OPTIONAL and must
+# be set as secrets on the Worker (they are not declared under
+# `[secrets].required`, so deploys succeed without them):
+#
+#   npx wrangler secret put REDDIT_CLIENT_ID
+#   npx wrangler secret put REDDIT_CLIENT_SECRET
+#
+# Reddit also requires a descriptive user agent; REDDIT_USER_AGENT may be set
+# the same way (a sensible default is used when absent). Without credentials
+# the module degrades with a typed REDDIT_NOT_CONFIGURED error.
+# See src/market/reddit.ts.
+# ============================================================================
