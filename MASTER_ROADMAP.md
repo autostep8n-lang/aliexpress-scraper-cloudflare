@@ -33,7 +33,9 @@
 - **P3.1 — Google Trends / Market Intelligence: DONE**
   - Cloudflare-native Google Trends provider + deterministic engine + persistence under `src/market/`; wired through `GET /api/market/google-trends`.
   - 67/67 focused P3.1 tests and 582/582 full-suite tests passing; typecheck, build and `git diff --check` clean; commit `3bc0461`.
-- **Next task: P3.2 — Reddit Intelligence**
+- **P3.2 — Reddit Intelligence: DONE**
+  - Implemented and merged as PR #1; implementation commit `b6ac2dc`, merge commit `324962b`.
+- **Next task: P3.3 — YouTube Signals**
 
 ## P0 — Foundation
 
@@ -70,7 +72,7 @@
 | # | Feature | Status | Notes |
 |---|---|---|---|
 | 16 | Google Trends | DONE | Completed as P3.1; commit `3bc0461`, `GET /api/market/google-trends`, provider abstraction + persistence in `src/market/` |
-| 17 | Reddit Intelligence | TODO | Not started |
+| 17 | Reddit Intelligence | DONE | Implemented and merged as PR #1; implementation commit `b6ac2dc`, merge commit `324962b` |
 | 18 | YouTube Signals | TODO | Not started |
 | 19 | Instagram Signals | TODO | Not started |
 | 20 | Facebook Signals | TODO | Not started |
