@@ -1,6 +1,7 @@
 import { handleDashboard } from "./dashboard";
 import { handleDiscover } from "./api/discover";
 import { handleGoogleTrends } from "./api/google-trends";
+import { handleInstagram } from "./api/instagram";
 import { handleReddit } from "./api/reddit";
 import { handleYouTube } from "./api/youtube";
 import { handleHealth, handleSupabaseHealth } from "./health";
@@ -95,6 +96,12 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
       const denied = guardGet(request, requestId);
       if (denied) return denied;
       return handleYouTube(request, env, ctx, requestId);
+    }
+
+    case "/api/market/instagram": {
+      const denied = guardGet(request, requestId);
+      if (denied) return denied;
+      return handleInstagram(request, env, ctx, requestId);
     }
 
     case "/api/products": {

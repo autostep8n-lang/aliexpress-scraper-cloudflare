@@ -56,11 +56,31 @@ export {
   youtubeModule,
 } from "./youtube";
 
+export {
+  buildInstagramSignal,
+  normalizeInstagramQuery,
+  parseInstagramHashtagSearchResponse,
+  parseInstagramMediaResponse,
+  toInstagramHashtag,
+  toInstagramObservationRow,
+} from "./instagram-engine";
+
+export {
+  buildHashtagSearchUrl,
+  buildRecentMediaUrl,
+  buildTopMediaUrl,
+  getInstagramProvider,
+  instagramModule,
+  isInstagramHost,
+  officialApiInstagramProvider,
+} from "./instagram";
+
 export { findMarketIntelligence, marketRegistry, registerMarketIntelligence } from "./registry";
 
 export {
   GOOGLE_TRENDS_PROPERTIES,
   GOOGLE_TRENDS_TIME_RANGES,
+  INSTAGRAM_MEDIA_TYPES,
   MarketError,
   REDDIT_SORTS,
   REDDIT_TIME_FILTERS,
@@ -72,8 +92,18 @@ export {
   type GoogleTrendsProvider,
   type GoogleTrendsQuery,
   type GoogleTrendsSignal,
+  type InstagramHashtag,
+  type InstagramMedia,
+  type InstagramMediaCollection,
+  type InstagramMediaType,
+  type InstagramObservationRow,
+  type InstagramPersistedRow,
+  type InstagramProvider,
+  type InstagramQuery,
+  type InstagramSignal,
   type MarketCollectResult,
   type MarketIntelligenceModule,
+  type NormalizedInstagramQuery,
   type NormalizedRedditQuery,
   type NormalizedTrendQuery,
   type NormalizedYouTubeQuery,

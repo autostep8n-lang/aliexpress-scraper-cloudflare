@@ -60,4 +60,20 @@ export interface Env {
    * secret, never committed. See `src/market/youtube.ts`.
    */
   YOUTUBE_API_KEY?: string;
+  /**
+   * Optional Instagram Graph API access token (long-lived app-user token for
+   * an Instagram Business/Creator account, ~60 days, refreshed out of band).
+   * Together with `INSTAGRAM_IG_USER_ID` it lets the Instagram
+   * market-intelligence module collect hashtag media via the official
+   * graph.facebook.com API. Without them the provider degrades with a typed
+   * `INSTAGRAM_NOT_CONFIGURED` error. Set as a secret, never committed. See
+   * `src/market/instagram.ts`.
+   */
+  INSTAGRAM_ACCESS_TOKEN?: string;
+  /**
+   * Optional Instagram Business/Creator account id (the IG User id) used as
+   * the base node for the Graph API hashtag_search edge. Not sensitive by
+   * itself; pair with `INSTAGRAM_ACCESS_TOKEN`.
+   */
+  INSTAGRAM_IG_USER_ID?: string;
 }

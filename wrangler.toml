@@ -100,3 +100,19 @@ binding = "BROWSER"
 # the module degrades with a typed REDDIT_NOT_CONFIGURED error.
 # See src/market/reddit.ts.
 # ============================================================================
+
+# ============================================================================
+# Optional Instagram Graph API credentials (developers.facebook.com)
+# ----------------------------------------------------------------------------
+# When present, the Instagram market-intelligence module (/api/market/instagram)
+# collects hashtag media via the official graph.facebook.com API. These are
+# OPTIONAL and must be set as secrets on the Worker (they are not declared
+# under `[secrets].required`, so deploys succeed without them):
+#
+#   npx wrangler secret put INSTAGRAM_ACCESS_TOKEN
+#
+# INSTAGRAM_IG_USER_ID (the IG Business/Creator account id) is not sensitive
+# and may be set via `[vars]` or `wrangler secret put`. Without both the module
+# degrades with a typed INSTAGRAM_NOT_CONFIGURED error.
+# See src/market/instagram.ts.
+# ============================================================================

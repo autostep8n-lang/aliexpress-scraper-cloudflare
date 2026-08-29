@@ -456,3 +456,153 @@ export interface YouTubeProvider {
   readonly name: string;
   fetchSignals(query: NormalizedYouTubeQuery, env: Env, ctx: ExecutionContext): Promise<YouTubeSignal[]>;
 }
+
+// ============================================================================
+// P3.4 - Instagram market intelligence.
+// ============================================================================
+
+/**
+ * Instagram media types as reported by the Graph API `media_type` field.
+ * Reels surface as `REEL`; any value outside the documented set maps to
+ * `UNKNOWN` (carousels are `CAROUSEL_ALBUM`).
+ */
+export type InstagramMediaType = "IMAGE" | "VIDEO" | "REEL" | "CAROUSEL_ALBUM" | "UNKNOWN";
+
+export const INSTAGRAM_MEDIA_TYPES: readonly InstagramMediaType[] = [
+  "IMAGE",
+  "VIDEO",
+  "REEL",
+  "CAROUSEL_ALBUM",
+  "UNKNOWN",
+];
+
+/** Raw, untrusted query input. Every field is `unknown` until normalized. */
+export interface InstagramQuery {
+  keyword?: unknown;
+  limit?: unknown;
+}
+
+/**
+ * Validated and normalized Instagram query. `hashtag` is derived from the
+ * keyword (lowercased, `#`-stripped, non-hashtag characters removed) and is
+ * what the hashtag_search edge is queried with.
+ */
+export interface NormalizedInstagramQuery {
+  keyword: string;
+  hashtag: string;
+  limit: number;
+}
+
+/**
+ * One media item as reported by the IG Hashtag `top_media`/`recent_media`
+ * edges (evidence for a signal). `media_url` is null when the media is a
+ * video with copyrighted/licensed audio or a reel with downloads disabled.
+ * `permalink` is null when the Graph API omits it.
+ */
+export interface InstagramMedia {
+  id: string;
+  mediaType: InstagramMediaType;
+  caption: string | null;
+  timestamp: string;
+  permalink: string | null;
+  likeCount: number;
+  commentsCount: number;
+  mediaUrl: string | null;
+  engagement: number;
+}
+
+/** The IG hashtag a `hashtag_search` call resolves. */
+export interface InstagramHashtag {
+  id: string;
+  name: string;
+}
+
+/** Parsed IG Hashtag media: the resolved hashtag plus both media edges. */
+export interface InstagramMediaCollection {
+  hashtagId: string;
+  hashtagName: string;
+  topMedia: InstagramMedia[];
+  recentMedia: InstagramMedia[];
+}
+
+/**
+ * One Instagram signal: a keyword-level snapshot aggregated from the media
+ * returned by the hashtag `top_media` and `recent_media` edges. `mediaCount`
+ * is the number of unique media items, `totalLikes`/`totalComments`/
+ * `totalEngagement` sum their engagement, and `topMedia` is the most engaging
+ * media ranked deterministically.
+ */
+export interface InstagramSignal {
+  keyword: string;
+  hashtag: string;
+  limit: number;
+  mediaCount: number;
+  topMediaCount: number;
+  recentMediaCount: number;
+  totalLikes: number;
+  totalComments: number;
+  totalEngagement: number;
+  avgLikes: number | null;
+  avgEngagement: number | null;
+  topMedia: InstagramMedia[];
+  capturedAt: string;
+}
+
+/**
+ * Row shape matching the `instagram_signals` schema (migration
+ * 20260817000014). `source_id` is resolved and filled by the repository.
+ */
+export interface InstagramObservationRow {
+  source_id: string | null;
+  keyword: string;
+  hashtag: string;
+  result_limit: number;
+  media_count: number;
+  top_media_count: number;
+  recent_media_count: number;
+  total_likes: number;
+  total_comments: number;
+  total_engagement: number;
+  avg_likes: number | null;
+  avg_engagement: number | null;
+  top_media_id: string | null;
+  top_media_caption: string | null;
+  captured_at: string;
+  metadata: Record<string, unknown>;
+}
+
+/**
+ * A persisted `instagram_signals` row as read back from the database: the
+ * observation fields plus storage-generated columns.
+ */
+export interface InstagramPersistedRow {
+  id: string;
+  source_id: string;
+  keyword: string;
+  hashtag: string;
+  result_limit: number;
+  media_count: number;
+  top_media_count: number;
+  recent_media_count: number;
+  total_likes: number;
+  total_comments: number;
+  total_engagement: number;
+  avg_likes: number | null;
+  avg_engagement: number | null;
+  top_media_id: string | null;
+  top_media_caption: string | null;
+  captured_at: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Provider abstraction for acquiring Instagram data. Implementations turn a
+ * normalized query into normalized signals regardless of the underlying
+ * acquisition mechanism (today the official Instagram Graph API).
+ */
+export interface InstagramProvider {
+  readonly name: string;
+  fetchSignals(query: NormalizedInstagramQuery, env: Env, ctx: ExecutionContext): Promise<InstagramSignal[]>;
+}

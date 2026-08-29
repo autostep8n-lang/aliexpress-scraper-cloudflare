@@ -4,6 +4,8 @@ import type { Product, ProductCategory } from "../products/types";
 import type {
   GoogleTrendsObservationRow,
   GoogleTrendsPersistedRow,
+  InstagramObservationRow,
+  InstagramPersistedRow,
   RedditObservationRow,
   RedditPersistedRow,
   YouTubeObservationRow,
@@ -119,6 +121,10 @@ const YOUTUBE_SELECT =
   "id, source_id, keyword, result_limit, order_by, published_within, video_count, total_views, total_likes, total_comments, avg_views, channel_count, top_video_id, top_video_title, top_channel, captured_at, metadata, created_at, updated_at";
 const YOUTUBE_SOURCE_SLUG = "youtube";
 const YOUTUBE_CONFLICT = "source_id,keyword,order_by,published_within";
+const INSTAGRAM_SELECT =
+  "id, source_id, keyword, hashtag, result_limit, media_count, top_media_count, recent_media_count, total_likes, total_comments, total_engagement, avg_likes, avg_engagement, top_media_id, top_media_caption, captured_at, metadata, created_at, updated_at";
+const INSTAGRAM_SOURCE_SLUG = "instagram";
+const INSTAGRAM_CONFLICT = "source_id,keyword";
 
 /**
  * Ingests one already-normalized Phase 1 `Product` into the P0.2 schema.
@@ -574,6 +580,103 @@ async function ensureYouTubeSource(client: SupabaseClient): Promise<StepResult<P
     const { data, error, status } = await client
       .from("sources")
       .upsert({ slug: YOUTUBE_SOURCE_SLUG, name: "YouTube", kind: "api" }, { onConflict: "slug" })
+      .select(SOURCE_SELECT)
+      .maybeSingle();
+    if (error || !data) {
+      return { status: "error", code: "source_create_failed", message: errorMessage(error, "failed to create source") };
+    }
+    return { status: "ok", data, created: status === 201 };
+  } catch (err) {
+    return { status: "error", code: "source_create_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Bulk-upserts Instagram market-intelligence signals (P3.4).
+ *
+ * Rows carry `source_id: null`; the source row for `instagram` is resolved
+ * idempotently and backfilled. Like `youtube`, the `instagram` source already
+ * exists as a `platform`-kind row seeded by migration 20260817000009, so the
+ * read-first lookup normally just reuses it (no new row is created).
+ * Deduplication is on `(source_id, keyword)`: a re-collect of the same keyword
+ * replaces the snapshot rather than appending a duplicate (one snapshot per
+ * keyword).
+ *
+ * Because PostgREST reports a single status for a bulk upsert (201 if any row
+ * was inserted, 200 if all were updated), `created`/`updated` describe the
+ * overall outcome; callers that need per-row counts would need an extra
+ * round-trip. Never throws.
+ */
+export async function upsertInstagramSignals(
+  env: Env,
+  rows: InstagramObservationRow[],
+): Promise<RepositoryResult<InstagramPersistedRow[]>> {
+  if (rows.length === 0) {
+    return { status: "updated", data: [] };
+  }
+
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  const source = await ensureInstagramSource(client);
+  if (source.status === "error") {
+    return { status: "error", code: source.code, message: source.message };
+  }
+
+  const payload = rows.map((row) => ({ ...row, source_id: source.data.id }));
+
+  try {
+    const { data, error, status } = await client
+      .from("instagram_signals")
+      .upsert(payload, { onConflict: INSTAGRAM_CONFLICT })
+      .select(INSTAGRAM_SELECT);
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "instagram_signals_upsert_failed",
+        message: errorMessage(error, "failed to upsert instagram signals"),
+      };
+    }
+    return {
+      status: status === 201 ? "created" : "updated",
+      data: data as InstagramPersistedRow[],
+    };
+  } catch (err) {
+    return { status: "error", code: "instagram_signals_upsert_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Resolves the `instagram` source row. The `instagram` source is seeded as a
+ * `platform`-kind row by migration 20260817000009, so this normally reads and
+ * reuses it. When it is missing (fresh environments, tests) it is created
+ * idempotently via an upsert keyed on the unique `slug` so concurrent calls
+ * never conflict. Separate from `ensureSource` because market-intelligence
+ * sources follow the Reddit/Google Trends read-then-create contract.
+ */
+async function ensureInstagramSource(client: SupabaseClient): Promise<StepResult<PersistedSourceRecord>> {
+  try {
+    const { data, error } = await client
+      .from("sources")
+      .select(SOURCE_SELECT)
+      .eq("slug", INSTAGRAM_SOURCE_SLUG)
+      .maybeSingle();
+    if (error) {
+      return { status: "error", code: "source_lookup_failed", message: errorMessage(error, "failed to look up source") };
+    }
+    if (data) {
+      return { status: "ok", data, created: false };
+    }
+  } catch (err) {
+    return { status: "error", code: "source_lookup_failed", message: toString(err) };
+  }
+
+  try {
+    const { data, error, status } = await client
+      .from("sources")
+      .upsert({ slug: INSTAGRAM_SOURCE_SLUG, name: "Instagram", kind: "api" }, { onConflict: "slug" })
       .select(SOURCE_SELECT)
       .maybeSingle();
     if (error || !data) {

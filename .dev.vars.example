@@ -34,3 +34,11 @@ SUPABASE_SECRET_KEY=<your-secret-key>
 # market-intelligence module collects via the official www.googleapis.com API.
 # Without it the module degrades with a typed YOUTUBE_NOT_CONFIGURED error.
 # YOUTUBE_API_KEY=<your-google-api-key>
+
+# Optional: Instagram Graph API access token (long-lived app-user token for an
+# Instagram Business/Creator account) plus that account's IG User id. When set,
+# the Instagram market-intelligence module collects hashtag media via the
+# official graph.facebook.com API. Without them it degrades with a typed
+# INSTAGRAM_NOT_CONFIGURED error.
+# INSTAGRAM_ACCESS_TOKEN=<your-long-lived-app-user-token>
+# INSTAGRAM_IG_USER_ID=<your-ig-business-account-id>
