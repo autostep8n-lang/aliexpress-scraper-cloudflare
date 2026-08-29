@@ -37,7 +37,9 @@
   - Implemented and merged as PR #1; implementation commit `b6ac2dc`, merge commit `324962b`.
 - **P3.3 — YouTube Signals: DONE**
   - Cloudflare-native YouTube provider (`search.list` + `videos.list`) + deterministic engine + `youtube_signals` persistence under `src/market/`; wired through `GET /api/market/youtube`; implementation commit `978aca8`.
-- **Next task: P3.4 — Instagram Signals**
+- **P3.4 — Instagram Signals: DONE**
+  - Cloudflare-native Instagram Graph API provider (`hashtag_search` + `top_media` + `recent_media`) + deterministic engine + `instagram_signals` persistence under `src/market/`; wired through `GET /api/market/instagram`; implementation commit `7e89531`.
+- **Next task: P3.5 — Facebook Signals**
 
 ## P0 — Foundation
 
@@ -76,7 +78,7 @@
 | 16 | Google Trends | DONE | Completed as P3.1; commit `3bc0461`, `GET /api/market/google-trends`, provider abstraction + persistence in `src/market/` |
 | 17 | Reddit Intelligence | DONE | Implemented and merged as PR #1; implementation commit `b6ac2dc`, merge commit `324962b` |
 | 18 | YouTube Signals | DONE | Completed as P3.3; implementation commit `978aca8`, `GET /api/market/youtube`, provider + engine + persistence in `src/market/youtube*.ts` |
-| 19 | Instagram Signals | TODO | Not started |
+| 19 | Instagram Signals | DONE | Completed as P3.4; implementation commit `7e89531`, `GET /api/market/instagram`, provider + engine + persistence in `src/market/instagram*.ts` |
 | 20 | Facebook Signals | TODO | Not started |
 | 21 | Pinterest Signals | TODO | Not started |
 
