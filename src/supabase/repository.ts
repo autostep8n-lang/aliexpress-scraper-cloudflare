@@ -2,6 +2,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env";
 import type { Product, ProductCategory } from "../products/types";
 import type {
+  CountryOpportunityObservationRow,
+  CountryOpportunityPersistedRow,
+} from "../country/types";
+import type {
   GoogleTrendsObservationRow,
   GoogleTrendsPersistedRow,
   InstagramObservationRow,
@@ -125,6 +129,9 @@ const INSTAGRAM_SELECT =
   "id, source_id, keyword, hashtag, result_limit, media_count, top_media_count, recent_media_count, total_likes, total_comments, total_engagement, avg_likes, avg_engagement, top_media_id, top_media_caption, captured_at, metadata, created_at, updated_at";
 const INSTAGRAM_SOURCE_SLUG = "instagram";
 const INSTAGRAM_CONFLICT = "source_id,keyword";
+const COUNTRY_OPPORTUNITY_SELECT =
+  "id, product_id, country, keyword, score_type, value, min_value, max_value, normalized, total_weight, tier, version, inputs, country_latest_value, country_change, country_direction, computed_at, created_at, updated_at";
+const COUNTRY_OPPORTUNITY_CONFLICT = "product_id,country,score_type";
 
 /**
  * Ingests one already-normalized Phase 1 `Product` into the P0.2 schema.
@@ -685,6 +692,48 @@ async function ensureInstagramSource(client: SupabaseClient): Promise<StepResult
     return { status: "ok", data, created: status === 201 };
   } catch (err) {
     return { status: "error", code: "source_create_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Bulk-upserts country opportunity scores (P4.23).
+ *
+ * Deduplication is on `(product_id, country, score_type)`: a re-score of the
+ * same product x country replaces the snapshot rather than appending a
+ * duplicate. No source row is required; scores are product-scoped, not
+ * market-signal-scoped. Never throws.
+ */
+export async function upsertCountryOpportunityScores(
+  env: Env,
+  rows: CountryOpportunityObservationRow[],
+): Promise<RepositoryResult<CountryOpportunityPersistedRow[]>> {
+  if (rows.length === 0) {
+    return { status: "updated", data: [] };
+  }
+
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    const { data, error, status } = await client
+      .from("country_opportunity_scores")
+      .upsert(rows, { onConflict: COUNTRY_OPPORTUNITY_CONFLICT })
+      .select(COUNTRY_OPPORTUNITY_SELECT);
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "country_opportunity_upsert_failed",
+        message: errorMessage(error, "failed to upsert country opportunity scores"),
+      };
+    }
+    return {
+      status: status === 201 ? "created" : "updated",
+      data: data as CountryOpportunityPersistedRow[],
+    };
+  } catch (err) {
+    return { status: "error", code: "country_opportunity_upsert_failed", message: toString(err) };
   }
 }
 

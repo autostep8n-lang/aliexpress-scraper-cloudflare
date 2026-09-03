@@ -99,6 +99,20 @@ const TABLE_DEFAULTS: Record<string, Record<string, unknown>> = {
     captured_at: "2026-08-18T00:00:00.000Z",
     metadata: {},
   },
+  country_opportunity_scores: {
+    score_type: "country_opportunity",
+    min_value: 0,
+    max_value: 100,
+    normalized: 0,
+    total_weight: 0,
+    tier: "unknown",
+    version: 1,
+    inputs: {},
+    country_latest_value: null,
+    country_change: null,
+    country_direction: null,
+    computed_at: "2026-08-18T00:00:00.000Z",
+  },
 };
 
 let idCounter = 0;
@@ -139,6 +153,7 @@ export function createMockPostgrest(): MockPostgrest {
     reddit_signals: [],
     youtube_signals: [],
     instagram_signals: [],
+    country_opportunity_scores: [],
   };
   const requests: RecordedRequest[] = [];
   const overrides: Override[] = [];
