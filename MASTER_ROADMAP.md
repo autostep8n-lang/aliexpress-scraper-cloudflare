@@ -39,7 +39,22 @@
   - Cloudflare-native YouTube provider (`search.list` + `videos.list`) + deterministic engine + `youtube_signals` persistence under `src/market/`; wired through `GET /api/market/youtube`; implementation commit `978aca8`.
 - **P3.4 — Instagram Signals: DONE**
   - Cloudflare-native Instagram Graph API provider (`hashtag_search` + `top_media` + `recent_media`) + deterministic engine + `instagram_signals` persistence under `src/market/`; wired through `GET /api/market/instagram`; implementation commit `7e89531`.
-- **Next task: P3.5 — Facebook Signals**
+- **P3.5 — Facebook Signals: SKIPPED / BLOCKED**
+  - Official Meta Graph API does not provide a generally available public organic keyword → posts + engagement discovery signal comparable to P3.2 Reddit, P3.3 YouTube, and P3.4 Instagram.
+  - No generally available public Facebook keyword/post search API.
+  - `/search?type=post` is not available for this purpose.
+  - Pages Search is page discovery, not organic keyword demand/content discovery.
+  - Page public content access requires additional Meta permissions/review and still does not provide arbitrary keyword-level market search.
+  - Ads Library / ads-related APIs are advertising intelligence, not organic market signals.
+  - No implementation, registry change, migration, or secrets added.
+- **P3.6 — Pinterest Signals: SKIPPED / BLOCKED**
+  - Official Pinterest API v5 does not provide a generally available public organic keyword → content + engagement signal comparable to P3.2 Reddit, P3.3 YouTube, and P3.4 Instagram.
+  - `/search/pins` and `/search/boards` search only the token user's own content.
+  - `/search/partner/pins` is beta/restricted and returns no useful engagement metrics.
+  - Trends API (`/trends/keywords/{region}/top/{trend_type}`) returns top trending keywords, not arbitrary keyword lookup.
+  - Ads keyword metrics (`/ad_accounts/{ad_account_id}/keywords/metrics`) are advertising intelligence, not organic market signals.
+  - No implementation, registry change, migration, or secrets added.
+- **Next task: P4 — Country Intelligence Engine**
 
 ## P0 — Foundation
 
@@ -79,8 +94,8 @@
 | 17 | Reddit Intelligence | DONE | Implemented and merged as PR #1; implementation commit `b6ac2dc`, merge commit `324962b` |
 | 18 | YouTube Signals | DONE | Completed as P3.3; implementation commit `978aca8`, `GET /api/market/youtube`, provider + engine + persistence in `src/market/youtube*.ts` |
 | 19 | Instagram Signals | DONE | Completed as P3.4; implementation commit `7e89531`, `GET /api/market/instagram`, provider + engine + persistence in `src/market/instagram*.ts` |
-| 20 | Facebook Signals | TODO | Not started |
-| 21 | Pinterest Signals | TODO | Not started |
+| 20 | Facebook Signals | SKIPPED / BLOCKED | Official Meta Graph API has no generally available public organic keyword → posts + engagement discovery signal comparable to Reddit / YouTube / Instagram. No public Facebook keyword/post search API; `/search?type=post` is not available for this purpose; Pages Search is page discovery not keyword demand; Page public content access requires extra Meta review and still is not arbitrary keyword-level market search; Ads Library / ads APIs are advertising intelligence, not organic market signals. Not implemented. |
+| 21 | Pinterest Signals | SKIPPED / BLOCKED | Official API has no generally available public organic keyword → content + engagement signal comparable to Reddit / YouTube / Instagram. `/search/pins` and `/search/boards` are user-owned; `/search/partner/pins` is beta/restricted without useful engagement; Trends API is top-trend lists not arbitrary lookup; ads keyword metrics are advertising intelligence, not organic market signals. Not implemented. |
 
 ## P4 — Country Intelligence
 
