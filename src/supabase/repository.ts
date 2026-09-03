@@ -93,6 +93,31 @@ export interface PersistedObservationRecord {
   last_scraped_at: string | null;
 }
 
+export interface PersistedScoreRecord {
+  id: string;
+  product_id: string;
+  product_source_id: string | null;
+  score_type: string;
+  value: number;
+  min_value: number | null;
+  max_value: number | null;
+  version: number;
+  inputs: Record<string, unknown>;
+  computed_at: string;
+}
+
+export interface ProductListFilter {
+  limit: number;
+  offset: number;
+  lifecycle?: string;
+  q?: string;
+}
+
+export interface ProductListPage {
+  products: PersistedProductRecord[];
+  total: number;
+}
+
 /** The full result of ingesting one product observation. */
 export interface PersistedProduct {
   source: PersistedSourceRecord;
@@ -132,6 +157,8 @@ const INSTAGRAM_CONFLICT = "source_id,keyword";
 const COUNTRY_OPPORTUNITY_SELECT =
   "id, product_id, country, keyword, score_type, value, min_value, max_value, normalized, total_weight, tier, version, inputs, country_latest_value, country_change, country_direction, computed_at, created_at, updated_at";
 const COUNTRY_OPPORTUNITY_CONFLICT = "product_id,country,score_type";
+const SCORE_SELECT =
+  "id, product_id, product_source_id, score_type, value, min_value, max_value, version, inputs, computed_at";
 
 /**
  * Ingests one already-normalized Phase 1 `Product` into the P0.2 schema.
@@ -314,6 +341,126 @@ export async function getObservation(
   } catch (err) {
     return { status: "error", code: "observation_lookup_failed", message: toString(err) };
   }
+}
+
+/**
+ * Read-only product discovery listing (P6.26).
+ *
+ * Filters by optional lifecycle and title substring, then pages by
+ * `last_seen_at` descending. Never writes.
+ */
+export async function listProducts(
+  env: Env,
+  filter: ProductListFilter,
+): Promise<RepositoryResult<ProductListPage>> {
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    let query = client
+      .from("products")
+      .select(PRODUCT_SELECT, { count: "exact" })
+      .order("last_seen_at", { ascending: false })
+      .range(filter.offset, filter.offset + filter.limit - 1);
+    if (filter.lifecycle) {
+      query = query.eq("lifecycle_status", filter.lifecycle);
+    }
+    if (filter.q) {
+      query = query.ilike("title", `%${escapeIlike(filter.q)}%`);
+    }
+    const { data, error, count } = await query;
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "product_list_failed",
+        message: errorMessage(error, "failed to list products"),
+      };
+    }
+    return {
+      status: "found",
+      data: {
+        products: data as PersistedProductRecord[],
+        total: typeof count === "number" ? count : data.length,
+      },
+    };
+  } catch (err) {
+    return { status: "error", code: "product_list_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Read-only latest `scores` rows for the given product ids (P6.26).
+ * Never writes. Callers pick the newest `computed_at` per score_type.
+ */
+export async function listScoresForProducts(
+  env: Env,
+  productIds: string[],
+): Promise<RepositoryResult<PersistedScoreRecord[]>> {
+  if (productIds.length === 0) {
+    return { status: "found", data: [] };
+  }
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    const { data, error } = await client
+      .from("scores")
+      .select(SCORE_SELECT)
+      .in("product_id", productIds)
+      .order("computed_at", { ascending: false });
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "score_list_failed",
+        message: errorMessage(error, "failed to list scores"),
+      };
+    }
+    return { status: "found", data: data as PersistedScoreRecord[] };
+  } catch (err) {
+    return { status: "error", code: "score_list_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Read-only country opportunity snapshots for the given product ids (P6.26).
+ * Never writes.
+ */
+export async function listCountryOpportunityScoresForProducts(
+  env: Env,
+  productIds: string[],
+): Promise<RepositoryResult<CountryOpportunityPersistedRow[]>> {
+  if (productIds.length === 0) {
+    return { status: "found", data: [] };
+  }
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    const { data, error } = await client
+      .from("country_opportunity_scores")
+      .select(COUNTRY_OPPORTUNITY_SELECT)
+      .in("product_id", productIds);
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "country_opportunity_list_failed",
+        message: errorMessage(error, "failed to list country opportunity scores"),
+      };
+    }
+    return { status: "found", data: data as CountryOpportunityPersistedRow[] };
+  } catch (err) {
+    return { status: "error", code: "country_opportunity_list_failed", message: toString(err) };
+  }
+}
+
+function escapeIlike(value: string): string {
+  return value.replace(/[%_\\]/g, "\\$&");
 }
 
 /**

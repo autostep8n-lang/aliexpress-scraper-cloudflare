@@ -10,11 +10,13 @@ async function get(path: string, requestEnv: Env = env): Promise<Response> {
 }
 
 describe("router", () => {
-  it("serves the dashboard landing page at /", async () => {
+  it("serves the product discovery dashboard at /", async () => {
     const res = await get("/");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
-    expect(await res.text()).toContain("Product Intelligence Platform");
+    const html = await res.text();
+    expect(html).toContain("Product Discovery");
+    expect(html).toContain("Supabase is not configured");
   });
 
   it("returns ok for GET /health", async () => {

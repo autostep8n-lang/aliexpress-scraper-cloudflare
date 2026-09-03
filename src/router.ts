@@ -5,7 +5,7 @@ import { handleInstagram } from "./api/instagram";
 import { handleReddit } from "./api/reddit";
 import { handleYouTube } from "./api/youtube";
 import { handleHealth, handleSupabaseHealth } from "./health";
-import { handleProductIngest } from "./api/products";
+import { handleProductIngest, handleProductList } from "./api/products";
 import { handleScrape } from "./api/scrape";
 import { jsonError, methodNotAllowed, notFound, notImplemented } from "./utils/http";
 import { createRequestId, logError, logRequest } from "./logging";
@@ -53,7 +53,7 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
     case "/": {
       const denied = guardGet(request, requestId);
       if (denied) return denied;
-      return handleDashboard(url);
+      return handleDashboard(url, env);
     }
 
     case "/health": {
@@ -105,8 +105,11 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
     }
 
     case "/api/products": {
+      if (request.method === "GET" || request.method === "HEAD") {
+        return handleProductList(request, env, requestId);
+      }
       if (request.method !== "POST") {
-        return methodNotAllowed(["POST"], requestId);
+        return methodNotAllowed(["GET", "HEAD", "POST"], requestId);
       }
       return handleProductIngest(request, env, requestId);
     }

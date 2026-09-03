@@ -189,12 +189,12 @@ describe("POST /api/products", () => {
     expect(body.code).toBe("source_lookup_failed");
   });
 
-  it("returns 405 for non-POST methods on /api/products", async () => {
+  it("returns 405 for methods other than GET/HEAD/POST on /api/products", async () => {
     vi.stubGlobal("fetch", server.fetch);
-    const res = await routeRequest(new Request("https://worker.example/api/products", { method: "GET" }), configuredEnv(), ctx);
+    const res = await routeRequest(new Request("https://worker.example/api/products", { method: "PUT" }), configuredEnv(), ctx);
 
     expect(res.status).toBe(405);
-    expect(res.headers.get("Allow")).toBe("POST");
+    expect(res.headers.get("Allow")).toBe("GET, HEAD, POST");
     expect(server.requests).toHaveLength(0);
   });
 

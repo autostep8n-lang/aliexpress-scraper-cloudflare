@@ -113,6 +113,14 @@ const TABLE_DEFAULTS: Record<string, Record<string, unknown>> = {
     country_direction: null,
     computed_at: "2026-08-18T00:00:00.000Z",
   },
+  scores: {
+    product_source_id: null,
+    min_value: 0,
+    max_value: 100,
+    version: 1,
+    inputs: {},
+    computed_at: "2026-08-18T00:00:00.000Z",
+  },
 };
 
 let idCounter = 0;
@@ -154,6 +162,7 @@ export function createMockPostgrest(): MockPostgrest {
     youtube_signals: [],
     instagram_signals: [],
     country_opportunity_scores: [],
+    scores: [],
   };
   const requests: RecordedRequest[] = [];
   const overrides: Override[] = [];
@@ -179,12 +188,21 @@ export function createMockPostgrest(): MockPostgrest {
     const table = url.pathname.replace(/^\/rest\/v1\//, "");
 
     if (method === "GET") {
-      const rows = applySearchParams(store[table] ?? [], url.searchParams);
+      let rows = applySearchParams(store[table] ?? [], url.searchParams);
+      rows = applyOrder(rows, url.searchParams.get("order"));
+      const total = rows.length;
+      const sliced = applyRange(rows, url.searchParams, req.headers);
       const select = url.searchParams.get("select") ?? "*";
-      const projected = rows.map((row) => project(row, select, table));
+      const projected = sliced.map((row) => project(row, select, table));
+      const rangeStart = sliced.length === 0 ? 0 : rows.indexOf(sliced[0]);
+      const rangeEnd = sliced.length === 0 ? 0 : rows.indexOf(sliced[sliced.length - 1]);
+      const contentRange = sliced.length === 0 ? `*/${total}` : `${rangeStart}-${rangeEnd}/${total}`;
       return new Response(JSON.stringify(projected), {
         status: 200,
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "content-range": contentRange,
+        },
       });
     }
 
@@ -238,16 +256,20 @@ export function createMockPostgrest(): MockPostgrest {
   function applySearchParams(rows: StoredRow[], params: URLSearchParams): StoredRow[] {
     let filtered = [...rows];
     for (const [key, value] of params) {
-      if (key === "select" || key === "limit" || key === "order" || key === "on_conflict") continue;
+      if (key === "select" || key === "limit" || key === "offset" || key === "order" || key === "on_conflict") continue;
       if (value.startsWith("eq.")) {
         const expected = value.slice(3);
         filtered = filtered.filter((row) => row[key] === expected);
       } else if (value.startsWith("ilike.")) {
-        const pattern = value.slice(6);
+        const pattern = value.slice(6).replace(/\\%/g, "%").replace(/\\_/g, "_");
         const regex = new RegExp("^" + pattern.split("%").map(escapeRegExp).join(".*") + "$", "i");
         filtered = filtered.filter((row) => typeof row[key] === "string" && regex.test(String(row[key])));
       } else if (value.startsWith("in.")) {
-        const expected = value.slice(3).split(",");
+        const inner = value.slice(3).replace(/^\(/, "").replace(/\)$/, "");
+        const expected = inner
+          .split(",")
+          .map((item) => item.trim().replace(/^"(.*)"$/, "$1"))
+          .filter(Boolean);
         filtered = filtered.filter((row) => expected.includes(String(row[key])));
       } else if (value.startsWith("cs.")) {
         const expected = JSON.parse(value.slice(3)) as unknown[];
@@ -278,6 +300,39 @@ export function createMockPostgrest(): MockPostgrest {
       }
     }
     return filtered;
+  }
+
+  function applyOrder(rows: StoredRow[], order: string | null): StoredRow[] {
+    if (!order) return rows;
+    const parts = order.split(",").map((part) => part.trim()).filter(Boolean);
+    return [...rows].sort((left, right) => {
+      for (const part of parts) {
+        const [column, direction] = part.split(".");
+        const av = left[column];
+        const bv = right[column];
+        if (av === bv) continue;
+        const cmp = String(av) < String(bv) ? -1 : 1;
+        return direction === "desc" ? -cmp : cmp;
+      }
+      return 0;
+    });
+  }
+
+  function applyRange(rows: StoredRow[], params: URLSearchParams, headers: Headers): StoredRow[] {
+    const range = headers.get("Range") ?? headers.get("range");
+    if (range) {
+      const match = /^(\d+)-(\d+)$/.exec(range);
+      if (match) {
+        return rows.slice(Number(match[1]), Number(match[2]) + 1);
+      }
+    }
+    const offsetRaw = params.get("offset");
+    const limitRaw = params.get("limit");
+    const offset = offsetRaw ? Number(offsetRaw) : 0;
+    if (limitRaw) {
+      return rows.slice(offset, offset + Number(limitRaw));
+    }
+    return offset > 0 ? rows.slice(offset) : rows;
   }
 
   function escapeRegExp(value: string): string {

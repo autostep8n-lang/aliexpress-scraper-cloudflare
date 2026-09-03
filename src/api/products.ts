@@ -1,3 +1,4 @@
+import { loadDiscoveryPage, parseProductListQuery } from "../dashboard/assemble";
 import type { Env } from "../env";
 import type { Product } from "../products/types";
 import { isProduct, validateProduct } from "../products/validation";
@@ -7,6 +8,34 @@ import { jsonError, jsonOk } from "../utils/http";
 export interface ProductIngestBody {
   product: Product;
   raw?: unknown;
+}
+
+/**
+ * GET /api/products — read-only product discovery list (P6.26).
+ *
+ * Lists persisted products by last_seen_at desc, then computes compact P5.24
+ * and P5.25 fields on-read. Never writes scores or analyst results.
+ *
+ * Outcomes map to:
+ * - 200 `{ status: "ok", products, page }`
+ * - 400 `INVALID_LIMIT` / `INVALID_OFFSET` / `INVALID_LIFECYCLE`
+ * - 503 `SUPABASE_NOT_CONFIGURED`
+ * - 502 with the repository's typed step code when a read fails
+ */
+export async function handleProductList(request: Request, env: Env, requestId: string): Promise<Response> {
+  const parsed = parseProductListQuery(new URL(request.url).searchParams);
+  if (!parsed.ok) {
+    return jsonError(400, parsed.message, parsed.code, requestId);
+  }
+
+  const assembled = await loadDiscoveryPage(env, parsed.query);
+  if (assembled.status === "credentials_missing") {
+    return jsonError(503, "Supabase is not configured", "SUPABASE_NOT_CONFIGURED", requestId);
+  }
+  if (assembled.status === "error") {
+    return jsonError(502, assembled.message, assembled.code ?? "PRODUCT_LIST_FAILED", requestId);
+  }
+  return jsonOk(assembled.data);
 }
 
 /**

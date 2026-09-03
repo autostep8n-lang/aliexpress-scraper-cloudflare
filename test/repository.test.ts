@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
-import { getObservation, upsertProduct } from "../src/supabase/repository";
+import {
+  getObservation,
+  listCountryOpportunityScoresForProducts,
+  listProducts,
+  listScoresForProducts,
+  upsertProduct,
+} from "../src/supabase/repository";
 import type { Product } from "../src/products/types";
 import { normalizeProduct } from "../src/products/normalize";
 import { computeGtinCheckDigit } from "../src/matching/normalize";
@@ -558,5 +564,160 @@ describe("getObservation", () => {
     expect(result.status).toBe("error");
     if (result.status !== "error") return;
     expect(result.code).toBe("source_lookup_failed");
+  });
+});
+
+describe("listProducts (P6.26 read-only)", () => {
+  let server: MockPostgrest;
+
+  beforeEach(() => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", server.fetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("returns credentials_missing without touching the network", async () => {
+    const fetchMock = vi.fn(server.fetch);
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await listProducts({} as Env, { limit: 20, offset: 0 });
+    expect(result.status).toBe("credentials_missing");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("lists products by last_seen_at desc with offset pagination", async () => {
+    server.seed("products", [
+      {
+        id: "p-old",
+        title: "Old Widget",
+        last_seen_at: "2026-01-01T00:00:00.000Z",
+        lifecycle_status: "active",
+      },
+      {
+        id: "p-new",
+        title: "New Widget",
+        last_seen_at: "2026-08-18T10:00:00.000Z",
+        lifecycle_status: "discovered",
+      },
+      {
+        id: "p-mid",
+        title: "Mid Widget",
+        last_seen_at: "2026-06-01T00:00:00.000Z",
+        lifecycle_status: "active",
+      },
+    ]);
+
+    const first = await listProducts(configuredEnv(), { limit: 2, offset: 0 });
+    expect(first.status).toBe("found");
+    if (first.status !== "found") return;
+    expect(first.data.total).toBe(3);
+    expect(first.data.products.map((row) => row.id)).toEqual(["p-new", "p-mid"]);
+
+    const second = await listProducts(configuredEnv(), { limit: 2, offset: 2 });
+    expect(second.status).toBe("found");
+    if (second.status !== "found") return;
+    expect(second.data.products.map((row) => row.id)).toEqual(["p-old"]);
+
+    expect(server.requests.every((request) => request.method === "GET")).toBe(true);
+  });
+
+  it("filters by lifecycle and title substring", async () => {
+    server.seed("products", [
+      {
+        id: "p-1",
+        title: "Wireless Earbuds",
+        last_seen_at: "2026-08-18T10:00:00.000Z",
+        lifecycle_status: "active",
+      },
+      {
+        id: "p-2",
+        title: "Wired Headphones",
+        last_seen_at: "2026-08-18T09:00:00.000Z",
+        lifecycle_status: "active",
+      },
+      {
+        id: "p-3",
+        title: "Wireless Speaker",
+        last_seen_at: "2026-08-18T08:00:00.000Z",
+        lifecycle_status: "archived",
+      },
+    ]);
+
+    const result = await listProducts(configuredEnv(), {
+      limit: 20,
+      offset: 0,
+      lifecycle: "active",
+      q: "Wireless",
+    });
+    expect(result.status).toBe("found");
+    if (result.status !== "found") return;
+    expect(result.data.products.map((row) => row.id)).toEqual(["p-1"]);
+  });
+
+  it("returns a typed error when the list read fails", async () => {
+    server.override("GET", "/rest/v1/products", 500, { message: "boom" });
+    const result = await listProducts(configuredEnv(), { limit: 20, offset: 0 });
+    expect(result.status).toBe("error");
+    if (result.status !== "error") return;
+    expect(result.code).toBe("product_list_failed");
+  });
+});
+
+describe("listScoresForProducts / listCountryOpportunityScoresForProducts", () => {
+  let server: MockPostgrest;
+
+  beforeEach(() => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", server.fetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("returns empty arrays without querying when no product ids are given", async () => {
+    const scores = await listScoresForProducts(configuredEnv(), []);
+    const countries = await listCountryOpportunityScoresForProducts(configuredEnv(), []);
+    expect(scores).toEqual({ status: "found", data: [] });
+    expect(countries).toEqual({ status: "found", data: [] });
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it("reads scores and country rows without writing", async () => {
+    server.seed("scores", [
+      {
+        id: "s-1",
+        product_id: "p-1",
+        score_type: "market_opportunity",
+        value: 40,
+        inputs: { normalized: 0.4 },
+        computed_at: "2026-08-18T10:00:00.000Z",
+      },
+    ]);
+    server.seed("country_opportunity_scores", [
+      {
+        id: "c-1",
+        product_id: "p-1",
+        country: "SA",
+        keyword: "earbuds",
+        value: 80,
+        normalized: 0.8,
+        total_weight: 0.6,
+        tier: "high",
+      },
+    ]);
+
+    const scores = await listScoresForProducts(configuredEnv(), ["p-1"]);
+    const countries = await listCountryOpportunityScoresForProducts(configuredEnv(), ["p-1"]);
+    expect(scores.status).toBe("found");
+    expect(countries.status).toBe("found");
+    if (scores.status !== "found" || countries.status !== "found") return;
+    expect(scores.data[0].score_type).toBe("market_opportunity");
+    expect(countries.data[0].country).toBe("SA");
+    expect(server.requests.every((request) => request.method === "GET")).toBe(true);
   });
 });
