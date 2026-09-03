@@ -70,8 +70,99 @@ export type DiscoveryLoadResult =
   | { status: "credentials_missing" }
   | { status: "error"; message: string; code?: string };
 
+/**
+ * P6.27 ranks only this many most-recent matching products (last_seen_at DESC).
+ * It is intentionally not a global ranking across the entire database.
+ */
+export const OPPORTUNITY_RANKING_WINDOW = 200;
+
+type RankableOpportunityScore = {
+  tier: string;
+  normalized: number;
+  value: number;
+  totalWeight?: number;
+};
+
+type RankableOpportunityProduct = {
+  id: string;
+  lastSeenAt: string;
+  decision: { score: RankableOpportunityScore };
+};
+
+type DiscoveryInputsResult =
+  | {
+      status: "ok";
+      products: PersistedProductRecord[];
+      scores: PersistedScoreRecord[];
+      countryScores: CountryOpportunityPersistedRow[];
+      total: number;
+    }
+  | { status: "credentials_missing" }
+  | { status: "error"; message: string; code?: string };
+
 export async function loadDiscoveryPage(env: Env, query: ProductListQuery): Promise<DiscoveryLoadResult> {
-  const listed = await listProducts(env, query);
+  const loaded = await loadDiscoveryInputs(env, query);
+  if (loaded.status !== "ok") {
+    return loaded;
+  }
+  return {
+    status: "ok",
+    data: assembleDiscoveryPage(loaded.products, loaded.scores, loaded.countryScores, query, loaded.total),
+  };
+}
+
+export async function loadOpportunitiesPage(env: Env, query: ProductListQuery): Promise<DiscoveryLoadResult> {
+  const loaded = await loadDiscoveryInputs(env, {
+    limit: OPPORTUNITY_RANKING_WINDOW,
+    offset: 0,
+    lifecycle: query.lifecycle,
+    q: query.q,
+  });
+  if (loaded.status !== "ok") {
+    return loaded;
+  }
+  const assembled = assembleDiscoveryProducts(loaded.products, loaded.scores, loaded.countryScores);
+  const ranked = rankOpportunityProducts(assembled);
+  return { status: "ok", data: paginateRankedOpportunities(ranked, query) };
+}
+
+export function isEligibleOpportunity(product: RankableOpportunityProduct): boolean {
+  if (product.decision.score.tier === "unknown") return false;
+  if (product.decision.score.totalWeight === 0) return false;
+  return true;
+}
+
+export function compareOpportunityRank(a: RankableOpportunityProduct, b: RankableOpportunityProduct): number {
+  if (b.decision.score.normalized !== a.decision.score.normalized) {
+    return b.decision.score.normalized - a.decision.score.normalized;
+  }
+  if (b.decision.score.value !== a.decision.score.value) {
+    return b.decision.score.value - a.decision.score.value;
+  }
+  if (a.lastSeenAt !== b.lastSeenAt) {
+    return a.lastSeenAt < b.lastSeenAt ? 1 : -1;
+  }
+  if (a.id === b.id) return 0;
+  return a.id < b.id ? -1 : 1;
+}
+
+export function rankOpportunityProducts<T extends RankableOpportunityProduct>(products: T[]): T[] {
+  return products.filter(isEligibleOpportunity).sort(compareOpportunityRank);
+}
+
+export function paginateRankedOpportunities<T extends RankableOpportunityProduct>(
+  ranked: T[],
+  query: ProductListQuery,
+): { status: "ok"; products: T[]; page: { limit: number; offset: number; total: number } } {
+  return {
+    status: "ok",
+    products: ranked.slice(query.offset, query.offset + query.limit),
+    page: { limit: query.limit, offset: query.offset, total: ranked.length },
+  };
+}
+
+async function loadDiscoveryInputs(env: Env, filter: ProductListQuery): Promise<DiscoveryInputsResult> {
+  const listed = await listProducts(env, filter);
   if (listed.status === "credentials_missing") {
     return { status: "credentials_missing" };
   }
@@ -107,7 +198,10 @@ export async function loadDiscoveryPage(env: Env, query: ProductListQuery): Prom
 
   return {
     status: "ok",
-    data: assembleDiscoveryPage(listed.data.products, scores.data, countries.data, query, listed.data.total),
+    products: listed.data.products,
+    scores: scores.data,
+    countryScores: countries.data,
+    total: listed.data.total,
   };
 }
 

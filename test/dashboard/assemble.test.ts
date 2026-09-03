@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { assembleDiscoveryProducts, parseProductListQuery } from "../../src/dashboard/assemble";
+import {
+  assembleDiscoveryProducts,
+  compareOpportunityRank,
+  isEligibleOpportunity,
+  OPPORTUNITY_RANKING_WINDOW,
+  paginateRankedOpportunities,
+  parseProductListQuery,
+  rankOpportunityProducts,
+} from "../../src/dashboard/assemble";
 import type { CountryOpportunityPersistedRow } from "../../src/country/types";
 import type { PersistedProductRecord, PersistedScoreRecord } from "../../src/supabase/repository";
 
@@ -148,5 +156,111 @@ describe("assembleDiscoveryProducts", () => {
     expect(row).not.toHaveProperty("evidence");
     expect(row.decision).not.toHaveProperty("evidence");
     expect(Object.keys(row.decision).sort()).toEqual(["caveats", "provider", "score", "selectedCountry", "summary"]);
+  });
+});
+
+function rankable(overrides: {
+  id: string;
+  lastSeenAt?: string;
+  normalized?: number;
+  value?: number;
+  tier?: string;
+  totalWeight?: number;
+}) {
+  return {
+    id: overrides.id,
+    lastSeenAt: overrides.lastSeenAt ?? "2026-08-18T10:00:00.000Z",
+    decision: {
+      score: {
+        tier: overrides.tier ?? "high",
+        normalized: overrides.normalized ?? 0.8,
+        value: overrides.value ?? 80,
+        totalWeight: overrides.totalWeight ?? 0.5,
+      },
+    },
+  };
+}
+
+describe("rankOpportunityProducts (P6.27)", () => {
+  it("ranks 2+ products by decision_opportunity normalized DESC", () => {
+    const high = product({ id: "p-low-seen", title: "High", last_seen_at: "2026-01-01T00:00:00.000Z" });
+    const low = product({ id: "p-high-seen", title: "Low", last_seen_at: "2026-08-18T10:00:00.000Z" });
+    const scores = [
+      { ...marketScore(0.9), id: "s-high", product_id: high.id },
+      { ...marketScore(0.4), id: "s-low", product_id: low.id },
+    ];
+    const assembled = assembleDiscoveryProducts([low, high], scores, []);
+    const ranked = rankOpportunityProducts(assembled);
+    expect(ranked.map((row) => row.id)).toEqual(["p-low-seen", "p-high-seen"]);
+    expect(ranked[0].decision.score.scoreType).toBe("decision_opportunity");
+    expect(ranked[0].decision.score.normalized).toBeGreaterThan(ranked[1].decision.score.normalized);
+  });
+
+  it("breaks assembled ties by lastSeenAt DESC then id ASC", () => {
+    const older = product({ id: "p-zzz", last_seen_at: "2026-01-01T00:00:00.000Z" });
+    const newer = product({ id: "p-aaa", last_seen_at: "2026-08-18T10:00:00.000Z" });
+    const sameOldA = product({ id: "p-aaa-same", last_seen_at: "2026-01-01T00:00:00.000Z" });
+    const sameOldZ = product({ id: "p-zzz-same", last_seen_at: "2026-01-01T00:00:00.000Z" });
+    const scores = [
+      { ...marketScore(0.6), id: "s-older", product_id: older.id },
+      { ...marketScore(0.6), id: "s-newer", product_id: newer.id },
+      { ...marketScore(0.5), id: "s-a", product_id: sameOldA.id },
+      { ...marketScore(0.5), id: "s-z", product_id: sameOldZ.id },
+    ];
+    const ranked = rankOpportunityProducts(assembleDiscoveryProducts([older, newer, sameOldZ, sameOldA], scores, []));
+    expect(ranked.map((row) => row.id)).toEqual(["p-aaa", "p-zzz", "p-aaa-same", "p-zzz-same"]);
+  });
+
+  it("breaks ties by value DESC, then lastSeenAt DESC, then id ASC", () => {
+    expect(rankOpportunityProducts([
+      rankable({ id: "low-value", value: 80, normalized: 0.8 }),
+      rankable({ id: "high-value", value: 81, normalized: 0.8 }),
+    ]).map((row) => row.id)).toEqual(["high-value", "low-value"]);
+    expect(rankOpportunityProducts([
+      rankable({ id: "older", lastSeenAt: "2026-08-18T10:00:00.000Z" }),
+      rankable({ id: "newer", lastSeenAt: "2026-08-18T12:00:00.000Z" }),
+    ]).map((row) => row.id)).toEqual(["newer", "older"]);
+    expect(rankOpportunityProducts([
+      rankable({ id: "zzz", lastSeenAt: "2026-08-18T10:00:00.000Z" }),
+      rankable({ id: "aaa", lastSeenAt: "2026-08-18T10:00:00.000Z" }),
+    ]).map((row) => row.id)).toEqual(["aaa", "zzz"]);
+    expect(compareOpportunityRank(rankable({ id: "a" }), rankable({ id: "a" }))).toBe(0);
+  });
+
+  it("excludes unknown tier and totalWeight === 0", () => {
+    const ranked = rankOpportunityProducts([
+      rankable({ id: "ok", tier: "low", totalWeight: 0.5 }),
+      rankable({ id: "unknown", tier: "unknown", totalWeight: 0.5 }),
+      rankable({ id: "zero", tier: "low", totalWeight: 0 }),
+    ]);
+    expect(ranked.map((row) => row.id)).toEqual(["ok"]);
+    expect(isEligibleOpportunity(rankable({ id: "unknown", tier: "unknown" }))).toBe(false);
+    expect(isEligibleOpportunity(rankable({ id: "zero", totalWeight: 0 }))).toBe(false);
+  });
+
+  it("does not let wrong-product or missing country evidence bypass P5.24", () => {
+    const [row] = assembleDiscoveryProducts(
+      [product()],
+      [],
+      [{ ...countryRow("SA", 0.99), product_id: "other-product" }, { ...countryRow("XX", 0.99), country: "XX" }],
+    );
+    expect(row.decision.score.tier).toBe("unknown");
+    expect(row.decision.score.value).toBe(0);
+    expect(rankOpportunityProducts([row])).toEqual([]);
+  });
+
+  it("paginates after ranking and reports eligible total", () => {
+    const ranked = [
+      rankable({ id: "a", normalized: 0.9, value: 90 }),
+      rankable({ id: "b", normalized: 0.7, value: 70 }),
+      rankable({ id: "c", normalized: 0.4, value: 40 }),
+    ];
+    const page = paginateRankedOpportunities(ranked, { limit: 1, offset: 1 });
+    expect(page.products.map((row) => row.id)).toEqual(["b"]);
+    expect(page.page).toEqual({ limit: 1, offset: 1, total: 3 });
+  });
+
+  it("documents the 200 most-recent ranking window (not a global rank)", () => {
+    expect(OPPORTUNITY_RANKING_WINDOW).toBe(200);
   });
 });

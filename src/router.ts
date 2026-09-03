@@ -1,7 +1,8 @@
-import { handleDashboard } from "./dashboard";
+import { handleDashboard, handleOpportunitiesDashboard } from "./dashboard";
 import { handleDiscover } from "./api/discover";
 import { handleGoogleTrends } from "./api/google-trends";
 import { handleInstagram } from "./api/instagram";
+import { handleOpportunityList } from "./api/opportunities";
 import { handleReddit } from "./api/reddit";
 import { handleYouTube } from "./api/youtube";
 import { handleHealth, handleSupabaseHealth } from "./health";
@@ -112,6 +113,18 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
         return methodNotAllowed(["GET", "HEAD", "POST"], requestId);
       }
       return handleProductIngest(request, env, requestId);
+    }
+
+    case "/api/opportunities": {
+      const denied = guardGet(request, requestId);
+      if (denied) return denied;
+      return handleOpportunityList(request, env, requestId);
+    }
+
+    case "/opportunities": {
+      const denied = guardGet(request, requestId);
+      if (denied) return denied;
+      return handleOpportunitiesDashboard(url, env);
     }
 
     default:

@@ -1,6 +1,26 @@
 import type { Env } from "../env";
-import { loadDiscoveryPage, parseProductListQuery } from "./assemble";
+import { loadDiscoveryPage, loadOpportunitiesPage, parseProductListQuery } from "./assemble";
 import { DEFAULT_PRODUCT_LIST_LIMIT, type DiscoveryPage, type DiscoveryProduct, type ProductListQuery } from "./types";
+
+type DashboardKind = "discovery" | "opportunities";
+
+const DASHBOARD_COPY: Record<
+  DashboardKind,
+  { title: string; empty: string; error: string; apiPath: string }
+> = {
+  discovery: {
+    title: "Product Discovery",
+    empty: "No products discovered yet.",
+    error: "Unable to load products.",
+    apiPath: "/api/products",
+  },
+  opportunities: {
+    title: "Top Opportunities",
+    empty: "No ranked opportunities.",
+    error: "Unable to load opportunities.",
+    apiPath: "/api/opportunities",
+  },
+};
 
 /**
  * Product Discovery Dashboard (P6.26).
@@ -9,18 +29,32 @@ import { DEFAULT_PRODUCT_LIST_LIMIT, type DiscoveryPage, type DiscoveryProduct, 
  * P5.24 / P5.25 fields. Read-only: never writes scores or analyst results.
  */
 export async function handleDashboard(url: URL, env: Env): Promise<Response> {
+  return handleDashboardKind(url, env, "discovery");
+}
+
+/**
+ * Top Opportunities Dashboard (P6.27).
+ *
+ * Server-rendered HTML list of products ranked by P5.24 Decision Opportunity
+ * within the 200 most recently seen matching products. Read-only.
+ */
+export async function handleOpportunitiesDashboard(url: URL, env: Env): Promise<Response> {
+  return handleDashboardKind(url, env, "opportunities");
+}
+
+async function handleDashboardKind(url: URL, env: Env, kind: DashboardKind): Promise<Response> {
   const parsed = parseProductListQuery(url.searchParams);
   if (!parsed.ok) {
-    return htmlResponse(renderErrorPage(parsed.message, parsed.code, url));
+    return htmlResponse(renderErrorPage(kind, parsed.message, parsed.code, url));
   }
-  const result = await loadDiscoveryPage(env, parsed.query);
+  const result = kind === "opportunities" ? await loadOpportunitiesPage(env, parsed.query) : await loadDiscoveryPage(env, parsed.query);
   if (result.status === "credentials_missing") {
-    return htmlResponse(renderUnconfiguredPage(url));
+    return htmlResponse(renderUnconfiguredPage(kind, url));
   }
   if (result.status === "error") {
-    return htmlResponse(renderErrorPage(result.message, result.code ?? "PRODUCT_LIST_FAILED", url));
+    return htmlResponse(renderErrorPage(kind, result.message, result.code ?? "PRODUCT_LIST_FAILED", url));
   }
-  return htmlResponse(renderDiscoveryPage(result.data, parsed.query, url));
+  return htmlResponse(renderListPage(kind, result.data, parsed.query, url));
 }
 
 function htmlResponse(html: string): Response {
@@ -29,16 +63,13 @@ function htmlResponse(html: string): Response {
   });
 }
 
-function renderDiscoveryPage(page: DiscoveryPage, query: ProductListQuery, url: URL): string {
+function renderListPage(kind: DashboardKind, page: DiscoveryPage, query: ProductListQuery, url: URL): string {
+  const copy = DASHBOARD_COPY[kind];
   const rows =
     page.products.length === 0
-      ? `<p class="empty">No products discovered yet.</p>`
+      ? `<p class="empty">${copy.empty}</p>`
       : `<ul class="products">${page.products.map(renderProduct).join("")}</ul>`;
-  return layout(
-    "Product Discovery",
-    `${renderFilters(query, url)}${rows}${renderPager(page, query, url)}`,
-    url,
-  );
+  return layout(kind, `${renderFilters(query, url)}${rows}${renderPager(page, query, url)}`, url);
 }
 
 function renderProduct(product: DiscoveryProduct): string {
@@ -103,30 +134,31 @@ function pagerHref(url: URL, query: ProductListQuery, offset: number): string {
   return search ? `${url.pathname}?${search}` : url.pathname;
 }
 
-function renderUnconfiguredPage(url: URL): string {
+function renderUnconfiguredPage(kind: DashboardKind, url: URL): string {
   return layout(
-    "Product Discovery",
+    kind,
     `<p class="empty">Supabase is not configured. Check <a href="${escapeHtml(`${url.protocol}//${url.host}/health/supabase`)}">/health/supabase</a>.</p>`,
     url,
   );
 }
 
-function renderErrorPage(message: string, code: string, url: URL): string {
+function renderErrorPage(kind: DashboardKind, message: string, code: string, url: URL): string {
   return layout(
-    "Product Discovery",
-    `<p class="error">Unable to load products. ${escapeHtml(code)}: ${escapeHtml(message)}</p>`,
+    kind,
+    `<p class="error">${DASHBOARD_COPY[kind].error} ${escapeHtml(code)}: ${escapeHtml(message)}</p>`,
     url,
   );
 }
 
-function layout(title: string, body: string, url: URL): string {
+function layout(kind: DashboardKind, body: string, url: URL): string {
+  const copy = DASHBOARD_COPY[kind];
   const baseUrl = `${url.protocol}//${url.host}`;
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${escapeHtml(title)}</title>
+    <title>${escapeHtml(copy.title)}</title>
     <style>
       body { font-family: system-ui, sans-serif; margin: 0; padding: 2rem; background: #0b1220; color: #e6edf3; }
       main { max-width: 52rem; margin: 0 auto; }
@@ -145,9 +177,9 @@ function layout(title: string, body: string, url: URL): string {
   </head>
   <body>
     <main>
-      <h1>Product Discovery</h1>
+      <h1>${escapeHtml(copy.title)}</h1>
       ${body}
-      <p><a href="${baseUrl}/health">/health</a> · <a href="${baseUrl}/api/products">/api/products</a></p>
+      <p><a href="${baseUrl}/health">/health</a> · <a href="${baseUrl}${copy.apiPath}">${copy.apiPath}</a></p>
     </main>
   </body>
 </html>`;
