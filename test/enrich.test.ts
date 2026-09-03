@@ -201,9 +201,10 @@ describe("enrichProduct", () => {
 
 describe("enrichProduct edge cases", () => {
   it("returns a product identical to normalizeProduct when no alternative keys are present", () => {
+    const scrapedAt = "2026-09-03T09:08:55.000Z";
     const raw = baseRaw({ description: "d", category: { name: "C" }, rating: { average: 4 }, source: "s" });
-    const enriched = enrichProduct({ raw, platform: "aliexpress", url: PRODUCT_URL });
-    const plain = normalizeProduct({ raw, platform: "aliexpress", url: PRODUCT_URL });
+    const enriched = enrichProduct({ raw, platform: "aliexpress", url: PRODUCT_URL, scrapedAt });
+    const plain = normalizeProduct({ raw, platform: "aliexpress", url: PRODUCT_URL, scrapedAt });
     expect(enriched).toEqual(plain);
   });
 
