@@ -1052,7 +1052,7 @@ function deriveBrand(product: Product): string | null {
 }
 
 function normalizeImages(images: Product["images"]): Array<{ url: string; alt?: string }> {
-  return images.map((image) => ({ url: image.url, ...(image.alt ? { alt: image.alt } : {}) }));
+  return (images ?? []).map((image) => ({ url: image.url, ...(image.alt ? { alt: image.alt } : {}) }));
 }
 
 function availabilityStatus(available: boolean | undefined): "in_stock" | "out_of_stock" | "unknown" {

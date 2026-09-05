@@ -106,6 +106,19 @@ describe("upsertProduct", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("ingests a valid product when images is omitted without throwing", async () => {
+    const { images: _images, ...withoutImages } = aliexpressProduct();
+    const product = withoutImages as Product;
+
+    const result = await upsertProduct(configuredEnv(), product);
+
+    expect(result.status).toBe("created");
+    if (result.status !== "created") return;
+    expect(result.data.product.images).toEqual([]);
+    expect(result.data.product.primary_image_url).toBeNull();
+    expect(result.data.observation.image_urls).toEqual([]);
+  });
+
   it("creates a source, unified product, category and observation for a new product", async () => {
     const empty = createMockPostgrest();
     vi.stubGlobal("fetch", empty.fetch);
