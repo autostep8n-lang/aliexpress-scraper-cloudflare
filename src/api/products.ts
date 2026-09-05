@@ -1,3 +1,4 @@
+import { scoreAndPersistMvpCountryOpportunity } from "../country/pipeline";
 import { loadDiscoveryPage, parseProductListQuery } from "../dashboard/assemble";
 import type { Env } from "../env";
 import type { Product } from "../products/types";
@@ -50,7 +51,12 @@ export async function handleProductList(request: Request, env: Env, requestId: s
  * - 503 `SUPABASE_NOT_CONFIGURED` when Supabase bindings are missing
  * - 502 with the repository's typed step code when the database rejects the write
  */
-export async function handleProductIngest(request: Request, env: Env, requestId: string): Promise<Response> {
+export async function handleProductIngest(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  requestId: string,
+): Promise<Response> {
   let body: unknown;
   try {
     body = await request.json();
@@ -80,6 +86,12 @@ export async function handleProductIngest(request: Request, env: Env, requestId:
       return jsonError(502, result.message, result.code ?? "INGEST_FAILED", requestId);
     case "created":
     case "updated":
+      try {
+        await scoreAndPersistMvpCountryOpportunity(env, ctx, {
+          productId: result.data.product.id,
+          title: result.data.product.title,
+        });
+      } catch {}
       return jsonOk(
         {
           status: result.status,

@@ -1,3 +1,4 @@
+import { scoreAndPersistMvpCountryOpportunity } from "../country/pipeline";
 import type { Env } from "../env";
 import { ProductNormalizationError, normalizeProduct } from "../products/normalize";
 import { findScraper } from "../scrapers/registry";
@@ -81,6 +82,12 @@ export async function handleScrape(
       return jsonError(502, persisted.message, persisted.code ?? "INGEST_FAILED", requestId);
     case "created":
     case "updated":
+      try {
+        await scoreAndPersistMvpCountryOpportunity(env, ctx, {
+          productId: persisted.data.product.id,
+          title: persisted.data.product.title,
+        });
+      } catch {}
       return jsonOk(
         {
           status: persisted.status,

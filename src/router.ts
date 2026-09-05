@@ -112,7 +112,7 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
       if (request.method !== "POST") {
         return methodNotAllowed(["GET", "HEAD", "POST"], requestId);
       }
-      return handleProductIngest(request, env, requestId);
+      return handleProductIngest(request, env, ctx, requestId);
     }
 
     case "/api/opportunities": {

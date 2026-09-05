@@ -1,8 +1,8 @@
 /**
  * Country Intelligence / Country Opportunity - public entry point (P4.22 / P4.23).
  *
- * Pure engines only: no HTTP, no collection, no wall-clock time. Persistence
- * lives in the Supabase repository; Google Trends collection remains P3.1.
+ * Pure engines plus the SA ingest glue in `pipeline.ts`. Persistence lives in
+ * the Supabase repository; Google Trends collection remains P3.1.
  */
 
 export {
@@ -17,7 +17,10 @@ export {
   scoreCountryOpportunity,
   toCountryOpportunityRow,
 } from "./engine";
+export { MVP_COUNTRY, scoreAndPersistMvpCountryOpportunity } from "./pipeline";
 export { CountryError, V1_COUNTRIES } from "./types";
+
+export type { CountryOpportunityPipelineResult, CountryOpportunityPipelineStatus } from "./pipeline";
 
 export type {
   CountryIntelligenceInput,

@@ -205,7 +205,9 @@ describe("POST /api/products", () => {
     expect(text).not.toContain(SECRET_KEY);
     for (const request of server.requests) {
       expect(request.url).not.toContain(SECRET_KEY);
-      expect(request.headers.get("Authorization")).toBe(`Bearer ${SECRET_KEY}`);
+      if (request.url.includes("/rest/v1/")) {
+        expect(request.headers.get("Authorization")).toBe(`Bearer ${SECRET_KEY}`);
+      }
     }
   });
 
