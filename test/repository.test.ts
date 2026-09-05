@@ -119,6 +119,15 @@ describe("upsertProduct", () => {
     expect(result.data.observation.image_urls).toEqual([]);
   });
 
+  it("uses the single-column dedup_key uniqueness contract as the upsert conflict target", async () => {
+    const result = await upsertProduct(configuredEnv(), aliexpressProduct());
+    expect(result.status).toBe("created");
+
+    const productPost = requestsTo(server, "POST", "/rest/v1/products")[0];
+    expect(new URL(productPost.url).searchParams.get("on_conflict")).toBe("dedup_key");
+    expect((productPost.body as { dedup_key: string }).dedup_key).toBe("aliexpress:1005001");
+  });
+
   it("creates a source, unified product, category and observation for a new product", async () => {
     const empty = createMockPostgrest();
     vi.stubGlobal("fetch", empty.fetch);
