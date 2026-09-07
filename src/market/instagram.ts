@@ -28,8 +28,8 @@ import {
  * secret and every request carries it as `access_token`. The provider makes
  * three calls per keyword:
  *
- *   1. GET https://graph.facebook.com/v26.0/{ig-user-id}/hashtag_search
- *      `q=<hashtag>&access_token=<token>` -> the IG hashtag id + name
+ *   1. GET https://graph.facebook.com/v26.0/ig_hashtag_search
+ *      `user_id=<ig-user-id>&q=<hashtag>&access_token=<token>` -> the IG hashtag id + name
  *   2. GET https://graph.facebook.com/v26.0/{ig-hashtag-id}/top_media
  *      `fields=id,media_type,caption,timestamp,permalink,like_count,
  *       comments_count,media_url&limit&access_token`
@@ -67,7 +67,7 @@ import {
 
 const API_HOST = "graph.facebook.com";
 const GRAPH_API_VERSION = "v26.0";
-const HASHTAG_SEARCH_PATH = "hashtag_search";
+const HASHTAG_SEARCH_PATH = "ig_hashtag_search";
 const TOP_MEDIA_PATH = "top_media";
 const RECENT_MEDIA_PATH = "recent_media";
 const MEDIA_FIELDS =
@@ -222,9 +222,10 @@ async function persistSignals(
   }
 }
 
-/** Builds the Graph API hashtag_search URL for a normalized query. */
+/** Builds the Graph API ig_hashtag_search URL for a normalized query. */
 export function buildHashtagSearchUrl(igUserId: string, hashtag: string, token: string): URL {
-  const url = new URL(`https://${API_HOST}/${GRAPH_API_VERSION}/${igUserId}/${HASHTAG_SEARCH_PATH}`);
+  const url = new URL(`https://${API_HOST}/${GRAPH_API_VERSION}/${HASHTAG_SEARCH_PATH}`);
+  url.searchParams.set("user_id", igUserId);
   url.searchParams.set("q", hashtag);
   url.searchParams.set("access_token", token);
   return url;

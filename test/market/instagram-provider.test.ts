@@ -81,7 +81,7 @@ function instagramRouter(server: MockPostgrest, opts: InstagramRouterOptions = {
           ? input
           : new URL((input as Request).url);
     if (url.hostname === "graph.facebook.com") {
-      if (url.pathname.endsWith("/hashtag_search")) {
+      if (url.pathname.endsWith("/ig_hashtag_search")) {
         if (opts.hashtagSearchHandler) return Promise.resolve(opts.hashtagSearchHandler(url, init));
         if (opts.hashtagSearch) return Promise.resolve(opts.hashtagSearch);
         return Promise.resolve(jsonResponse(HASHTAG_SEARCH_FIXTURE));
@@ -158,7 +158,8 @@ describe("buildHashtagSearchUrl", () => {
   it("builds the Graph API hashtag_search URL", () => {
     const url = buildHashtagSearchUrl(IG_USER_ID, "smartwatch", ACCESS_TOKEN);
     expect(url.hostname).toBe("graph.facebook.com");
-    expect(url.pathname).toBe("/v26.0/iguser/hashtag_search");
+    expect(url.pathname).toBe("/v26.0/ig_hashtag_search");
+    expect(url.searchParams.get("user_id")).toBe(IG_USER_ID);
     expect(url.searchParams.get("q")).toBe("smartwatch");
     expect(url.searchParams.get("access_token")).toBe(ACCESS_TOKEN);
   });
@@ -202,8 +203,10 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
       instagramRouter(server, {
         hashtagSearchHandler: (url) => {
           seen.push("hashtag_search");
-          expect(url.pathname).toBe("/v26.0/iguser/hashtag_search");
+          expect(url.pathname).toBe("/v26.0/ig_hashtag_search");
+          expect(url.searchParams.get("user_id")).toBe(IG_USER_ID);
           expect(url.searchParams.get("q")).toBe("smartwatch");
+          expect(url.searchParams.get("access_token")).toBe(ACCESS_TOKEN);
           return jsonResponse(HASHTAG_SEARCH_FIXTURE);
         },
         topMediaHandler: (url) => {
@@ -382,7 +385,7 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
   it("rejects redirect loops with TOO_MANY_REDIRECTS", async () => {
     server = createMockPostgrest();
     let hops = 0;
-    const handler = (): Response => redirectResponse(`https://graph.facebook.com/v26.0/iguser/hashtag_search?hop=${++hops}`);
+    const handler = (): Response => redirectResponse(`https://graph.facebook.com/v26.0/ig_hashtag_search?hop=${++hops}`);
     vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearchHandler: handler }));
 
     await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({

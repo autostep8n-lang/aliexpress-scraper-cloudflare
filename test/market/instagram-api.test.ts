@@ -77,7 +77,7 @@ function compositeFetch(
         : input instanceof URL
           ? input
           : new URL((input as Request).url);
-    if (url.hostname === "graph.facebook.com" && url.pathname.endsWith("/hashtag_search")) {
+    if (url.hostname === "graph.facebook.com" && url.pathname.endsWith("/ig_hashtag_search")) {
       if (opts.hashtagSearch) return Promise.resolve(opts.hashtagSearch);
       return Promise.resolve(jsonResponse(HASHTAG_SEARCH_FIXTURE));
     }
