@@ -75,6 +75,19 @@ export {
   officialApiInstagramProvider,
 } from "./instagram";
 
+export {
+  INSTAGRAM_OAUTH_CALLBACK_PATH,
+  INSTAGRAM_OAUTH_START_PATH,
+  buildInstagramAuthorizeUrl,
+  buildOAuthCallbackUrl,
+  exchangeInstagramAuthorizationCode,
+  hasInstagramOAuthCredentials,
+  isInstagramOAuthHost,
+  parseInstagramOAuthCallbackParams,
+  parseLongLivedTokenPayload,
+  parseShortLivedTokenPayload,
+} from "./instagram-oauth";
+
 export { findMarketIntelligence, marketRegistry, registerMarketIntelligence } from "./registry";
 
 export {

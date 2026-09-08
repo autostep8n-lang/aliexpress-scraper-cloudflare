@@ -23,10 +23,12 @@ import {
  * Instagram - official Graph API provider and collect module (P3.4).
  *
  * Instagram has an official Graph API for reading public hashtag media from a
- * linked Instagram Business/Creator account. There is no runtime OAuth flow:
- * a long-lived app-user access token for the account is configured as a
- * secret and every request carries it as `access_token`. The provider makes
- * three calls per keyword:
+ * linked Instagram Business/Creator account. Collect still uses a configured
+ * long-lived token (`INSTAGRAM_ACCESS_TOKEN`); Business Login lives on
+ * `/api/market/instagram/oauth` and `/api/market/instagram/oauth/callback`
+ * (see `src/market/instagram-oauth.ts`) so an operator can obtain that token.
+ * Every Graph request carries `access_token`. The provider makes three calls
+ * per keyword:
  *
  *   1. GET https://graph.facebook.com/v26.0/ig_hashtag_search
  *      `user_id=<ig-user-id>&q=<hashtag>&access_token=<token>` -> the IG hashtag id + name

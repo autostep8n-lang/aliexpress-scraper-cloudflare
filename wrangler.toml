@@ -115,4 +115,10 @@ binding = "BROWSER"
 # and may be set via `[vars]` or `wrangler secret put`. Without both the module
 # degrades with a typed INSTAGRAM_NOT_CONFIGURED error.
 # See src/market/instagram.ts.
+#
+# Instagram Business Login (optional, for obtaining the long-lived token):
+#   npx wrangler secret put INSTAGRAM_APP_ID
+#   npx wrangler secret put INSTAGRAM_APP_SECRET
+# Meta Redirect URL (exact):
+#   https://aliexpress-scraper-cloudflare.auto-step8n.workers.dev/api/market/instagram/oauth/callback
 # ============================================================================

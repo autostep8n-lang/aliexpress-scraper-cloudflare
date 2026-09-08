@@ -1,7 +1,7 @@
 import { handleDashboard, handleOpportunitiesDashboard } from "./dashboard";
 import { handleDiscover } from "./api/discover";
 import { handleGoogleTrends } from "./api/google-trends";
-import { handleInstagram } from "./api/instagram";
+import { handleInstagram, handleInstagramOAuthCallback, handleInstagramOAuthStart } from "./api/instagram";
 import { handleOpportunityList } from "./api/opportunities";
 import { handleReddit } from "./api/reddit";
 import { handleYouTube } from "./api/youtube";
@@ -103,6 +103,18 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
       const denied = guardGet(request, requestId);
       if (denied) return denied;
       return handleInstagram(request, env, ctx, requestId);
+    }
+
+    case "/api/market/instagram/oauth": {
+      const denied = guardGet(request, requestId);
+      if (denied) return denied;
+      return handleInstagramOAuthStart(request, env, requestId);
+    }
+
+    case "/api/market/instagram/oauth/callback": {
+      const denied = guardGet(request, requestId);
+      if (denied) return denied;
+      return handleInstagramOAuthCallback(request, env, requestId);
     }
 
     case "/api/products": {

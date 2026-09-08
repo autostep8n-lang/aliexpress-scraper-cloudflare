@@ -42,3 +42,11 @@ SUPABASE_SECRET_KEY=<your-secret-key>
 # INSTAGRAM_NOT_CONFIGURED error.
 # INSTAGRAM_ACCESS_TOKEN=<your-long-lived-app-user-token>
 # INSTAGRAM_IG_USER_ID=<your-ig-business-account-id>
+#
+# Optional: Instagram Business Login app credentials (Meta Developer App).
+# Used by GET /api/market/instagram/oauth and /api/market/instagram/oauth/callback
+# to exchange an authorization code for a long-lived user token. Without them
+# the callback returns INSTAGRAM_OAUTH_NOT_CONFIGURED. The Graph collector
+# still uses INSTAGRAM_ACCESS_TOKEN / INSTAGRAM_IG_USER_ID above.
+# INSTAGRAM_APP_ID=<your-meta-app-id>
+# INSTAGRAM_APP_SECRET=<your-meta-app-secret>

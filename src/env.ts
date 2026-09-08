@@ -76,4 +76,15 @@ export interface Env {
    * itself; pair with `INSTAGRAM_ACCESS_TOKEN`.
    */
   INSTAGRAM_IG_USER_ID?: string;
+  /**
+   * Optional Instagram Business Login app id (Meta Developer App). Used only
+   * by GET /api/market/instagram/oauth and the oauth/callback token exchange.
+   * Not the Graph collector token. See `src/market/instagram-oauth.ts`.
+   */
+  INSTAGRAM_APP_ID?: string;
+  /**
+   * Optional Instagram Business Login app secret. Set as a secret, never
+   * committed. Pair with INSTAGRAM_APP_ID. The callback never logs this value.
+   */
+  INSTAGRAM_APP_SECRET?: string;
 }
