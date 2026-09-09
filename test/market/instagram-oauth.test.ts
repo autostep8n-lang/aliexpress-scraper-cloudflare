@@ -5,13 +5,16 @@ import {
   INSTAGRAM_OAUTH_CALLBACK_PATH,
   buildInstagramAuthorizeUrl,
   buildOAuthCallbackUrl,
+  createOAuthState,
   exchangeInstagramAuthorizationCode,
   hasInstagramOAuthCredentials,
   isInstagramOAuthHost,
+  isValidCallbackState,
   parseInstagramOAuthCallbackParams,
   parseLongLivedTokenPayload,
   parseShortLivedTokenPayload,
   timingSafeEqual,
+  verifyOAuthState,
 } from "../../src/market/instagram-oauth";
 
 const APP_ID = "test-app-id";
@@ -136,6 +139,48 @@ describe("parseShortLivedTokenPayload / parseLongLivedTokenPayload", () => {
     } catch (err) {
       expect((err as MarketError).code).toBe("INVALID_PAYLOAD");
     }
+  });
+});
+
+describe("createOAuthState / verifyOAuthState / isValidCallbackState", () => {
+  const NOW = Date.UTC(2026, 8, 8, 12, 0, 0);
+
+  it("accepts a freshly signed state without a cookie", async () => {
+    const state = await createOAuthState(APP_SECRET, NOW);
+    expect(state).toMatch(/^[0-9a-f]{32}\.[0-9]+\.[0-9a-f]{64}$/);
+    expect(await verifyOAuthState(APP_SECRET, state, NOW)).toBe(true);
+    expect(await isValidCallbackState({ secret: APP_SECRET, state, now: NOW })).toBe(true);
+  });
+
+  it("accepts a matching cookie as extra binding", async () => {
+    const state = await createOAuthState(APP_SECRET, NOW);
+    expect(await isValidCallbackState({ secret: APP_SECRET, state, cookieState: state, now: NOW })).toBe(true);
+  });
+
+  it("rejects a missing, unsigned, or Meta-dashboard callback with no state", async () => {
+    expect(await isValidCallbackState({ secret: APP_SECRET, now: NOW })).toBe(false);
+    expect(await isValidCallbackState({ secret: APP_SECRET, state: "", now: NOW })).toBe(false);
+    expect(await isValidCallbackState({ secret: APP_SECRET, state: "abc123", now: NOW })).toBe(false);
+  });
+
+  it("rejects a tampered or wrong-secret signature", async () => {
+    const state = await createOAuthState(APP_SECRET, NOW);
+    const [nonce, issuedAt, mac] = state.split(".");
+    const flipped = `${nonce}.${issuedAt}.${mac.slice(0, -1)}${mac.endsWith("a") ? "b" : "a"}`;
+    expect(await verifyOAuthState(APP_SECRET, flipped, NOW)).toBe(false);
+    expect(await verifyOAuthState("other-secret", state, NOW)).toBe(false);
+  });
+
+  it("rejects expired state after 10 minutes", async () => {
+    const state = await createOAuthState(APP_SECRET, NOW);
+    expect(await verifyOAuthState(APP_SECRET, state, NOW + 601_000)).toBe(false);
+    expect(await verifyOAuthState(APP_SECRET, state, NOW + 599_000)).toBe(true);
+  });
+
+  it("rejects a cookie that does not match the signed query state", async () => {
+    const state = await createOAuthState(APP_SECRET, NOW);
+    const other = await createOAuthState(APP_SECRET, NOW);
+    expect(await isValidCallbackState({ secret: APP_SECRET, state, cookieState: other, now: NOW })).toBe(false);
   });
 });
 

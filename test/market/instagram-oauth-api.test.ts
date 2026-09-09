@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../../src/env";
+import { createOAuthState } from "../../src/market/instagram-oauth";
 import { routeRequest } from "../../src/router";
 
 const APP_ID = "test-app-id";
 const APP_SECRET = "test-app-secret";
 const AUTH_CODE = "test-auth-code";
-const STATE = "fixed-oauth-state";
 const SHORT_TOKEN = "short-lived-token";
 const LONG_TOKEN = "long-lived-token";
 const USER_ID = "17841400000000000";
@@ -80,8 +80,9 @@ describe("GET /api/market/instagram/oauth", () => {
     expect(url.searchParams.get("client_id")).toBe(APP_ID);
     expect(url.searchParams.get("redirect_uri")).toBe(REDIRECT_URI);
     expect(url.searchParams.get("response_type")).toBe("code");
-    expect(url.searchParams.get("state")).toMatch(/^[0-9a-f]{32}$/);
+    expect(url.searchParams.get("state")).toMatch(/^[0-9a-f]{32}\.[0-9]+\.[0-9a-f]{64}$/);
     expect(res.headers.get("set-cookie")).toContain("ig_oauth_state=");
+    expect(res.headers.get("set-cookie")).toContain(url.searchParams.get("state") ?? "");
   });
 
   it("returns 503 INSTAGRAM_OAUTH_NOT_CONFIGURED when app credentials are missing", async () => {
@@ -99,8 +100,9 @@ describe("GET /api/market/instagram/oauth/callback", () => {
 
   it("exchanges a valid code and returns the long-lived token metadata", async () => {
     vi.stubGlobal("fetch", oauthFetch());
-    const res = await get(`${CALLBACK_PATH}?code=${AUTH_CODE}&state=${STATE}`, oauthEnv(), {
-      headers: { cookie: `ig_oauth_state=${STATE}` },
+    const state = await createOAuthState(APP_SECRET);
+    const res = await get(`${CALLBACK_PATH}?code=${AUTH_CODE}&state=${state}`, oauthEnv(), {
+      headers: { cookie: `ig_oauth_state=${state}` },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
@@ -116,8 +118,9 @@ describe("GET /api/market/instagram/oauth/callback", () => {
   it("returns 400 MISSING_CODE when the code is absent", async () => {
     const fetchStub = vi.fn();
     vi.stubGlobal("fetch", fetchStub);
-    const res = await get(`${CALLBACK_PATH}?state=${STATE}`, oauthEnv(), {
-      headers: { cookie: `ig_oauth_state=${STATE}` },
+    const state = await createOAuthState(APP_SECRET);
+    const res = await get(`${CALLBACK_PATH}?state=${state}`, oauthEnv(), {
+      headers: { cookie: `ig_oauth_state=${state}` },
     });
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ code: "MISSING_CODE" });
@@ -126,8 +129,9 @@ describe("GET /api/market/instagram/oauth/callback", () => {
 
   it("returns 400 INVALID_CODE when Meta rejects the authorization code", async () => {
     vi.stubGlobal("fetch", oauthFetch());
-    const res = await get(`${CALLBACK_PATH}?code=already-used&state=${STATE}`, oauthEnv(), {
-      headers: { cookie: `ig_oauth_state=${STATE}` },
+    const state = await createOAuthState(APP_SECRET);
+    const res = await get(`${CALLBACK_PATH}?code=already-used&state=${state}`, oauthEnv(), {
+      headers: { cookie: `ig_oauth_state=${state}` },
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { code: string; error: string };
@@ -157,8 +161,9 @@ describe("GET /api/market/instagram/oauth/callback", () => {
         throw new TypeError("Failed to fetch");
       }),
     );
-    const res = await get(`${CALLBACK_PATH}?code=${AUTH_CODE}&state=${STATE}`, oauthEnv(), {
-      headers: { cookie: `ig_oauth_state=${STATE}` },
+    const state = await createOAuthState(APP_SECRET);
+    const res = await get(`${CALLBACK_PATH}?code=${AUTH_CODE}&state=${state}`, oauthEnv(), {
+      headers: { cookie: `ig_oauth_state=${state}` },
     });
     expect(res.status).toBe(502);
     const body = (await res.json()) as { code: string; error: string };
@@ -169,8 +174,9 @@ describe("GET /api/market/instagram/oauth/callback", () => {
 
   it("returns 400 INVALID_PAYLOAD when Meta returns malformed token JSON", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("not-json", { status: 200 })));
-    const res = await get(`${CALLBACK_PATH}?code=${AUTH_CODE}&state=${STATE}`, oauthEnv(), {
-      headers: { cookie: `ig_oauth_state=${STATE}` },
+    const state = await createOAuthState(APP_SECRET);
+    const res = await get(`${CALLBACK_PATH}?code=${AUTH_CODE}&state=${state}`, oauthEnv(), {
+      headers: { cookie: `ig_oauth_state=${state}` },
     });
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ code: "INVALID_PAYLOAD" });
@@ -179,8 +185,9 @@ describe("GET /api/market/instagram/oauth/callback", () => {
   it("returns 503 INSTAGRAM_OAUTH_NOT_CONFIGURED when app credentials are missing", async () => {
     const fetchStub = vi.fn();
     vi.stubGlobal("fetch", fetchStub);
-    const res = await get(`${CALLBACK_PATH}?code=${AUTH_CODE}&state=${STATE}`, {} as Env, {
-      headers: { cookie: `ig_oauth_state=${STATE}` },
+    const state = await createOAuthState(APP_SECRET);
+    const res = await get(`${CALLBACK_PATH}?code=${AUTH_CODE}&state=${state}`, {} as Env, {
+      headers: { cookie: `ig_oauth_state=${state}` },
     });
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ code: "INSTAGRAM_OAUTH_NOT_CONFIGURED" });
@@ -190,9 +197,50 @@ describe("GET /api/market/instagram/oauth/callback", () => {
   it("returns 400 INVALID_STATE when the state cookie does not match", async () => {
     const fetchStub = vi.fn();
     vi.stubGlobal("fetch", fetchStub);
-    const res = await get(`${CALLBACK_PATH}?code=${AUTH_CODE}&state=${STATE}`, oauthEnv(), {
-      headers: { cookie: "ig_oauth_state=other-state" },
+    const state = await createOAuthState(APP_SECRET);
+    const other = await createOAuthState(APP_SECRET);
+    const res = await get(`${CALLBACK_PATH}?code=${AUTH_CODE}&state=${state}`, oauthEnv(), {
+      headers: { cookie: `ig_oauth_state=${other}` },
     });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "INVALID_STATE" });
+    expect(fetchStub).not.toHaveBeenCalled();
+  });
+
+  it("accepts a signed state when Instagram's cross-site return drops the cookie", async () => {
+    vi.stubGlobal("fetch", oauthFetch());
+    const state = await createOAuthState(APP_SECRET);
+    const res = await get(`${CALLBACK_PATH}?code=${AUTH_CODE}&state=${state}`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: "ok", userId: USER_ID, accessToken: LONG_TOKEN });
+  });
+
+  it("returns 400 INVALID_STATE for Meta's dashboard URL which has no state param", async () => {
+    const fetchStub = vi.fn();
+    vi.stubGlobal("fetch", fetchStub);
+    const res = await get(`${CALLBACK_PATH}?code=${AUTH_CODE}`);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "INVALID_STATE" });
+    expect(fetchStub).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 INVALID_STATE when the signed state is tampered", async () => {
+    const fetchStub = vi.fn();
+    vi.stubGlobal("fetch", fetchStub);
+    const state = await createOAuthState(APP_SECRET);
+    const [nonce, issuedAt, mac] = state.split(".");
+    const tampered = `${nonce}.${issuedAt}.${mac.slice(0, -1)}${mac.endsWith("a") ? "b" : "a"}`;
+    const res = await get(`${CALLBACK_PATH}?code=${AUTH_CODE}&state=${tampered}`);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "INVALID_STATE" });
+    expect(fetchStub).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 INVALID_STATE when the signed state is expired", async () => {
+    const fetchStub = vi.fn();
+    vi.stubGlobal("fetch", fetchStub);
+    const expired = await createOAuthState(APP_SECRET, Date.now() - 601_000);
+    const res = await get(`${CALLBACK_PATH}?code=${AUTH_CODE}&state=${expired}`);
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ code: "INVALID_STATE" });
     expect(fetchStub).not.toHaveBeenCalled();
@@ -211,8 +259,9 @@ describe("GET /api/market/instagram/oauth/callback", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.stubGlobal("fetch", oauthFetch());
-    await get(`${CALLBACK_PATH}?code=${AUTH_CODE}&state=${STATE}`, oauthEnv(), {
-      headers: { cookie: `ig_oauth_state=${STATE}` },
+    const state = await createOAuthState(APP_SECRET);
+    await get(`${CALLBACK_PATH}?code=${AUTH_CODE}&state=${state}`, oauthEnv(), {
+      headers: { cookie: `ig_oauth_state=${state}` },
     });
     const dumped = [...errorSpy.mock.calls, ...logSpy.mock.calls].map((args) => JSON.stringify(args)).join("\n");
     expect(dumped).not.toContain(LONG_TOKEN);

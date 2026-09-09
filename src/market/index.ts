@@ -80,12 +80,15 @@ export {
   INSTAGRAM_OAUTH_START_PATH,
   buildInstagramAuthorizeUrl,
   buildOAuthCallbackUrl,
+  createOAuthState,
   exchangeInstagramAuthorizationCode,
   hasInstagramOAuthCredentials,
   isInstagramOAuthHost,
+  isValidCallbackState,
   parseInstagramOAuthCallbackParams,
   parseLongLivedTokenPayload,
   parseShortLivedTokenPayload,
+  verifyOAuthState,
 } from "./instagram-oauth";
 
 export { findMarketIntelligence, marketRegistry, registerMarketIntelligence } from "./registry";

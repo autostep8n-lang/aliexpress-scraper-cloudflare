@@ -95,10 +95,49 @@ export function buildInstagramAuthorizeUrl(opts: {
   return url;
 }
 
-export function createOAuthState(): string {
+/**
+ * CSRF state is HMAC-SHA256(appSecret, nonce.issuedAt), not a random cookie
+ * value. Instagram's authorize round-trip is a cross-site top-level GET back
+ * to workers.dev; Chrome bounce-tracking and Safari ITP often drop the
+ * SameSite=Lax cookie set on the 302 start response. The signed `state`
+ * query param is the source of truth. The cookie is optional extra binding.
+ * Format: `{32-hex-nonce}.{unix-seconds}.{64-hex-hmac}`.
+ */
+export async function createOAuthState(secret: string, now = Date.now()): Promise<string> {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
-  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const nonce = toHex(bytes);
+  const issuedAt = Math.floor(now / 1000).toString();
+  const payload = `${nonce}.${issuedAt}`;
+  const mac = await hmacSha256Hex(secret, payload);
+  return `${payload}.${mac}`;
+}
+
+export async function verifyOAuthState(secret: string, state: string, now = Date.now()): Promise<boolean> {
+  const parts = state.split(".");
+  if (parts.length !== 3) return false;
+  const [nonce, issuedAt, mac] = parts;
+  if (!/^[0-9a-f]{32}$/.test(nonce) || !/^[0-9]{1,12}$/.test(issuedAt) || !/^[0-9a-f]{64}$/.test(mac)) {
+    return false;
+  }
+  const issued = Number(issuedAt);
+  if (!Number.isFinite(issued)) return false;
+  const ageSeconds = Math.floor(now / 1000) - issued;
+  if (ageSeconds < -30 || ageSeconds > STATE_MAX_AGE_SECONDS) return false;
+  const expected = await hmacSha256Hex(secret, `${nonce}.${issuedAt}`);
+  return timingSafeEqual(mac, expected);
+}
+
+export async function isValidCallbackState(opts: {
+  secret: string;
+  state?: string;
+  cookieState?: string;
+  now?: number;
+}): Promise<boolean> {
+  if (!opts.state) return false;
+  if (!(await verifyOAuthState(opts.secret, opts.state, opts.now))) return false;
+  if (opts.cookieState && !timingSafeEqual(opts.state, opts.cookieState)) return false;
+  return true;
 }
 
 const STATE_COOKIE_PATH = "/api/market/instagram";
@@ -133,6 +172,22 @@ export function timingSafeEqual(left: string, right: string): boolean {
     mismatch |= left.charCodeAt(i) ^ right.charCodeAt(i);
   }
   return mismatch === 0;
+}
+
+function toHex(bytes: Uint8Array): string {
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function hmacSha256Hex(secret: string, payload: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  return toHex(new Uint8Array(signature));
 }
 
 export interface InstagramOAuthCallbackParams {

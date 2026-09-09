@@ -10,10 +10,10 @@ import {
   exchangeInstagramAuthorizationCode,
   hasInstagramOAuthCredentials,
   instagramOAuthCredentials,
+  isValidCallbackState,
   oauthStateCookie,
   parseInstagramOAuthCallbackParams,
   readOAuthStateCookie,
-  timingSafeEqual,
 } from "../market/instagram-oauth";
 import { MarketError, type InstagramSignal } from "../market/types";
 import { jsonError, jsonOk } from "../utils/http";
@@ -108,7 +108,7 @@ const OAUTH_CLIENT_CODES = new Set([
  * Redirects the browser to Instagram's authorize URL and sets an HttpOnly
  * state cookie. Requires INSTAGRAM_APP_ID and INSTAGRAM_APP_SECRET.
  */
-export function handleInstagramOAuthStart(request: Request, env: Env, requestId: string): Response {
+export async function handleInstagramOAuthStart(request: Request, env: Env, requestId: string): Promise<Response> {
   const credentials = instagramOAuthCredentials(env);
   if (!credentials) {
     return jsonError(
@@ -119,7 +119,7 @@ export function handleInstagramOAuthStart(request: Request, env: Env, requestId:
     );
   }
 
-  const state = createOAuthState();
+  const state = await createOAuthState(credentials.appSecret);
   const redirectUri = buildOAuthCallbackUrl(request.url);
   const authorizeUrl = buildInstagramAuthorizeUrl({
     appId: credentials.appId,
@@ -185,7 +185,13 @@ export async function handleInstagramOAuthCallback(
   }
 
   const expectedState = readOAuthStateCookie(request);
-  if (!params.state || !expectedState || !timingSafeEqual(params.state, expectedState)) {
+  if (
+    !(await isValidCallbackState({
+      secret: instagramOAuthCredentials(env)?.appSecret ?? "",
+      state: params.state,
+      cookieState: expectedState,
+    }))
+  ) {
     return withClearedOAuthCookie(jsonError(400, "instagram oauth state mismatch", "INVALID_STATE", requestId));
   }
 
