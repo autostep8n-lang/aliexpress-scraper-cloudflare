@@ -2,6 +2,7 @@ import { handleDashboard, handleOpportunitiesDashboard } from "./dashboard";
 import { handleDiscover } from "./api/discover";
 import { handleGoogleTrends } from "./api/google-trends";
 import { handleInstagram, handleInstagramOAuthCallback, handleInstagramOAuthStart } from "./api/instagram";
+import { handleInstagramMeSmoke } from "./api/instagram-me";
 import { handleOpportunityList } from "./api/opportunities";
 import { handleReddit } from "./api/reddit";
 import { handleYouTube } from "./api/youtube";
@@ -115,6 +116,12 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
       const denied = guardGet(request, requestId);
       if (denied) return denied;
       return handleInstagramOAuthCallback(request, env, requestId);
+    }
+
+    case "/api/tmp/instagram-me": {
+      const denied = guardGet(request, requestId);
+      if (denied) return denied;
+      return handleInstagramMeSmoke(env, requestId);
     }
 
     case "/api/products": {
