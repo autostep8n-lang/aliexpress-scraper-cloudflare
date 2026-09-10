@@ -13,6 +13,7 @@ import {
   parseInstagramOAuthCallbackParams,
   parseLongLivedTokenPayload,
   parseShortLivedTokenPayload,
+  quoteJsonIntegerField,
   timingSafeEqual,
   verifyOAuthState,
 } from "../../src/market/instagram-oauth";
@@ -23,6 +24,7 @@ const AUTH_CODE = "test-auth-code";
 const SHORT_TOKEN = "short-lived-token";
 const LONG_TOKEN = "long-lived-token";
 const USER_ID = "17841400000000000";
+const LARGE_USER_ID = "28689534960681881";
 const REDIRECT_URI = "https://aliexpress-scraper-cloudflare.auto-step8n.workers.dev/api/market/instagram/oauth/callback";
 
 function oauthEnv(overrides: Partial<Env> = {}): Env {
@@ -111,8 +113,36 @@ describe("parseShortLivedTokenPayload / parseLongLivedTokenPayload", () => {
 
   it("maps a data-array short-lived token", () => {
     expect(
-      parseShortLivedTokenPayload({ data: [{ access_token: SHORT_TOKEN, user_id: Number(USER_ID) }] }),
-    ).toEqual({ accessToken: SHORT_TOKEN, userId: USER_ID });
+      parseShortLivedTokenPayload({ data: [{ access_token: SHORT_TOKEN, user_id: 12345 }] }),
+    ).toEqual({ accessToken: SHORT_TOKEN, userId: "12345" });
+  });
+
+  it("preserves a 17-digit Instagram user_id exactly as a string", () => {
+    expect(parseShortLivedTokenPayload({ access_token: SHORT_TOKEN, user_id: LARGE_USER_ID })).toEqual({
+      accessToken: SHORT_TOKEN,
+      userId: LARGE_USER_ID,
+    });
+    expect(parseShortLivedTokenPayload({ access_token: SHORT_TOKEN, user_id: LARGE_USER_ID }).userId).toBe(
+      "28689534960681881",
+    );
+  });
+
+  it("quotes an unquoted JSON user_id so JSON.parse cannot round it", () => {
+    const raw = `{"access_token":"${SHORT_TOKEN}","user_id":28689534960681881}`;
+    expect(String(JSON.parse(raw).user_id)).not.toBe(LARGE_USER_ID);
+    const quoted = quoteJsonIntegerField(raw, "user_id");
+    expect(quoted).toContain('"user_id":"28689534960681881"');
+    expect(JSON.parse(quoted).user_id).toBe(LARGE_USER_ID);
+    expect(parseShortLivedTokenPayload(JSON.parse(quoted))).toEqual({
+      accessToken: SHORT_TOKEN,
+      userId: LARGE_USER_ID,
+    });
+  });
+
+  it("rejects an already-rounded unsafe numeric user_id", () => {
+    expect(() =>
+      parseShortLivedTokenPayload({ access_token: SHORT_TOKEN, user_id: 28689534960681881 }),
+    ).toThrow(MarketError);
   });
 
   it("rejects a short-lived payload without access_token", () => {
@@ -235,6 +265,27 @@ describe("exchangeInstagramAuthorizationCode", () => {
       expiresIn: 5184000,
     });
     expect(fetchStub).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves an unquoted 17-digit user_id from the token endpoint", async () => {
+    const fetchStub = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? new URL(input) : input instanceof URL ? input : new URL((input as Request).url);
+      if (url.hostname === "api.instagram.com" && url.pathname === "/oauth/access_token") {
+        return new Response(`{"access_token":"${SHORT_TOKEN}","user_id":28689534960681881}`, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.hostname === "graph.instagram.com" && url.pathname === "/access_token") {
+        return jsonResponse({ access_token: LONG_TOKEN, token_type: "bearer", expires_in: 5184000 });
+      }
+      throw new Error(`unexpected host ${url.hostname}${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetchStub);
+
+    const token = await exchangeInstagramAuthorizationCode(oauthEnv(), AUTH_CODE, REDIRECT_URI);
+    expect(token.userId).toBe(LARGE_USER_ID);
+    expect(token.userId).toBe("28689534960681881");
   });
 
   it("throws INSTAGRAM_OAUTH_NOT_CONFIGURED when app credentials are missing", async () => {

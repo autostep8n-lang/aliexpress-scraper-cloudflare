@@ -287,11 +287,36 @@ async function exchangeLongLivedToken(
 export function parseShortLivedTokenPayload(payload: Record<string, unknown>): { accessToken: string; userId: string } {
   const entry = firstTokenEntry(payload);
   const accessToken = asNonEmptyString(entry["access_token"]);
-  const userId = asNonEmptyString(entry["user_id"]);
+  const userId = asInstagramUserId(entry["user_id"]);
   if (!accessToken || !userId) {
     throw new MarketError("INVALID_PAYLOAD", "instagram oauth token response is missing access_token or user_id");
   }
   return { accessToken, userId };
+}
+
+/**
+ * Instagram user ids are 17+ digit decimals and must stay exact strings.
+ * Never pass them through JSON.parse number / Number / Math.trunc.
+ */
+export function asInstagramUserId(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return /^\d+$/.test(trimmed) ? trimmed : undefined;
+  }
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return String(value);
+  }
+  return undefined;
+}
+
+/**
+ * Rewrites unquoted JSON integer fields to quoted strings so `JSON.parse`
+ * cannot coerce Instagram ids through IEEE-754 Number. Already-quoted
+ * string values are left unchanged.
+ */
+export function quoteJsonIntegerField(text: string, field: string): string {
+  const pattern = new RegExp(`("${field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\s*:\\s*)(-?\\d+)`, "g");
+  return text.replace(pattern, '$1"$2"');
 }
 
 export function parseLongLivedTokenPayload(
@@ -381,7 +406,7 @@ async function readJsonResponse(response: Response, label: string): Promise<Reco
 
   let json: unknown;
   try {
-    json = JSON.parse(text);
+    json = JSON.parse(quoteJsonIntegerField(text, "user_id"));
   } catch {
     throw new MarketError("INVALID_PAYLOAD", `instagram oauth ${label} returned malformed JSON`);
   }
