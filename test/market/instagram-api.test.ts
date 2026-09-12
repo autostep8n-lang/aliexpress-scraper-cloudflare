@@ -258,6 +258,26 @@ describe("GET /api/market/instagram", () => {
     expect(body.code).toBe("AUTH_ERROR");
   });
 
+  it("never leaks the Graph access_token in an AUTH_ERROR API response", async () => {
+    server = createMockPostgrest();
+
+    const res = await get(
+      server,
+      "/api/market/instagram?q=phone",
+      configuredEnv(),
+      compositeFetch(server, { hashtagSearch: graphErrorResponse(190) }),
+    );
+    const text = await res.text();
+    const body = JSON.parse(text) as { error: string; code: string };
+
+    expect(res.status).toBe(502);
+    expect(body.code).toBe("AUTH_ERROR");
+    expect(text).not.toContain(ACCESS_TOKEN);
+    expect(body.error).not.toContain(ACCESS_TOKEN);
+    expect(body.error).toContain("access_token=REDACTED");
+    expect(body.error).toContain("/v26.0/ig_hashtag_search");
+  });
+
   it("returns 502 INSTAGRAM_NOT_CONFIGURED when the access token is missing", async () => {
     server = createMockPostgrest();
 

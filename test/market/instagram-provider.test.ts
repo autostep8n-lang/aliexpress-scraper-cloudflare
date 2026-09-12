@@ -11,6 +11,7 @@ import {
   instagramModule,
   isInstagramHost,
   officialApiInstagramProvider,
+  sanitizeInstagramUrl,
 } from "../../src/market/instagram";
 import { MarketError } from "../../src/market/types";
 import { createMockPostgrest, type MockPostgrest } from "../helpers/postgrest-mock";
@@ -145,6 +146,30 @@ describe("isInstagramHost", () => {
     expect(isInstagramHost("facebook.com")).toBe(false);
     expect(isInstagramHost("www.googleapis.com")).toBe(false);
     expect(isInstagramHost("example.com")).toBe(false);
+  });
+});
+
+describe("sanitizeInstagramUrl", () => {
+  it("redacts access_token while keeping host, path, and other query params", () => {
+    const url =
+      "https://graph.facebook.com/v26.0/ig_hashtag_search?user_id=iguser&q=smartwatch&access_token=secret-token-value";
+    const sanitized = sanitizeInstagramUrl(url);
+    expect(sanitized).toContain("https://graph.facebook.com/v26.0/ig_hashtag_search");
+    expect(sanitized).toContain("user_id=iguser");
+    expect(sanitized).toContain("q=smartwatch");
+    expect(sanitized).toContain("access_token=REDACTED");
+    expect(sanitized).not.toContain("secret-token-value");
+  });
+
+  it("redacts client_secret and appsecret_proof", () => {
+    const url = new URL("https://graph.facebook.com/v26.0/me");
+    url.searchParams.set("client_secret", "app-secret");
+    url.searchParams.set("appsecret_proof", "proof-value");
+    const sanitized = sanitizeInstagramUrl(url);
+    expect(sanitized).toContain("client_secret=REDACTED");
+    expect(sanitized).toContain("appsecret_proof=REDACTED");
+    expect(sanitized).not.toContain("app-secret");
+    expect(sanitized).not.toContain("proof-value");
   });
 });
 
@@ -290,6 +315,97 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
     await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({
       code: "AUTH_ERROR",
     });
+  });
+
+  it("never leaks access_token from a Graph AUTH_ERROR message", async () => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: graphErrorResponse(190) }));
+
+    const error = await officialApiInstagramProvider
+      .fetchSignals(NORMALIZED, configuredEnv(), ctx)
+      .catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(MarketError);
+    const message = (error as MarketError).message;
+    expect((error as MarketError).code).toBe("AUTH_ERROR");
+    expect(message).not.toContain(ACCESS_TOKEN);
+    expect(message).toContain("access_token=REDACTED");
+    expect(message).toContain("/v26.0/ig_hashtag_search");
+    expect(JSON.stringify(error)).not.toContain(ACCESS_TOKEN);
+  });
+
+  it("never leaks access_token from a Graph RATE_LIMITED message", async () => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: graphErrorResponse(613) }));
+
+    const error = await officialApiInstagramProvider
+      .fetchSignals(NORMALIZED, configuredEnv(), ctx)
+      .catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(MarketError);
+    const message = (error as MarketError).message;
+    expect((error as MarketError).code).toBe("RATE_LIMITED");
+    expect(message).not.toContain(ACCESS_TOKEN);
+    expect(message).toContain("access_token=REDACTED");
+    expect(JSON.stringify(error)).not.toContain(ACCESS_TOKEN);
+  });
+
+  it("never leaks access_token from TIMEOUT or network HTTP_ERROR messages", async () => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", () => Promise.reject(new DOMException("The operation timed out.", "TimeoutError")));
+
+    const timeoutError = await officialApiInstagramProvider
+      .fetchSignals(NORMALIZED, configuredEnv(), ctx)
+      .catch((err: unknown) => err);
+    expect(timeoutError).toBeInstanceOf(MarketError);
+    expect((timeoutError as MarketError).message).not.toContain(ACCESS_TOKEN);
+    expect((timeoutError as MarketError).message).toContain("access_token=REDACTED");
+
+    vi.stubGlobal("fetch", () => Promise.reject(new TypeError("Failed to fetch")));
+    const networkError = await officialApiInstagramProvider
+      .fetchSignals(NORMALIZED, configuredEnv(), ctx)
+      .catch((err: unknown) => err);
+    expect(networkError).toBeInstanceOf(MarketError);
+    expect((networkError as MarketError).message).not.toContain(ACCESS_TOKEN);
+    expect((networkError as MarketError).message).toContain("access_token=REDACTED");
+    expect((networkError as MarketError).message).toContain("/v26.0/ig_hashtag_search");
+  });
+
+  it("never leaks access_token when fetch throws an error whose message contains the request URL", async () => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", (input: RequestInfo | URL) => {
+      const href =
+        typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+      return Promise.reject(new TypeError(`fetch failed: ${href}`));
+    });
+
+    const error = await officialApiInstagramProvider
+      .fetchSignals(NORMALIZED, configuredEnv(), ctx)
+      .catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(MarketError);
+    const message = (error as MarketError).message;
+    expect((error as MarketError).code).toBe("HTTP_ERROR");
+    expect(message).not.toContain(ACCESS_TOKEN);
+    expect(JSON.stringify(error)).not.toContain(ACCESS_TOKEN);
+    expect(message).toContain("graph.facebook.com");
+    expect(message).toContain("/v26.0/ig_hashtag_search");
+    expect(message).toContain("access_token=REDACTED");
+  });
+
+  it("preserves a 17-digit hashtag id from unquoted Graph JSON", async () => {
+    server = createMockPostgrest();
+    const rawHashtag = '{"data":[{"id":28689534960681881,"name":"smartwatch"}]}';
+    const rawMedia = '{"data":[{"id":28689534960681881,"media_type":"IMAGE","timestamp":"2026-01-01T00:00:00+0000","like_count":1,"comments_count":0}]}';
+    vi.stubGlobal(
+      "fetch",
+      instagramRouter(server, {
+        hashtagSearch: new Response(rawHashtag, { status: 200, headers: { "content-type": "application/json" } }),
+        topMedia: new Response(rawMedia, { status: 200, headers: { "content-type": "application/json" } }),
+        recentMedia: new Response('{"data":[]}', { status: 200, headers: { "content-type": "application/json" } }),
+      }),
+    );
+
+    const signals = await officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx);
+    expect(signals[0].topMedia[0].id).toBe("28689534960681881");
+    expect(signals[0].topMedia[0].id).not.toBe(String(JSON.parse(rawMedia).data[0].id));
   });
 
   it("maps an expired-session Graph error (code 102) to AUTH_ERROR", async () => {

@@ -6,6 +6,7 @@ import {
   parseInstagramMediaResponse,
   toInstagramObservationRow,
 } from "./instagram-engine";
+import { quoteJsonIntegerField } from "./instagram-oauth";
 import { upsertInstagramSignals } from "../supabase/repository";
 import {
   MarketError,
@@ -85,10 +86,26 @@ const DEFAULT_PROVIDER_NAME = "official-api";
 const AUTH_ERROR_CODES = new Set([190, 102]);
 /** Graph API error codes treated as quota/rate-limit failures. */
 const RATE_LIMIT_ERROR_CODES = new Set([4, 17, 613]);
+const REDACTED_QUERY_KEYS = new Set(["access_token", "client_secret", "appsecret_proof"]);
 
 /** True for the Instagram Graph host this provider is allowed to talk to. */
 export function isInstagramHost(hostname: string): boolean {
   return hostname.toLowerCase() === API_HOST;
+}
+
+export function sanitizeInstagramUrl(url: string | URL): string {
+  const raw = typeof url === "string" ? url : url.href;
+  try {
+    const parsed = new URL(raw);
+    for (const key of [...parsed.searchParams.keys()]) {
+      if (REDACTED_QUERY_KEYS.has(key.toLowerCase())) {
+        parsed.searchParams.set(key, "REDACTED");
+      }
+    }
+    return parsed.href;
+  } catch {
+    return raw.replace(/([?&](?:access_token|client_secret|appsecret_proof)=)[^&]*/gi, "$1REDACTED");
+  }
 }
 
 /**
@@ -258,7 +275,7 @@ async function fetchJson(url: URL, _env: Env, label: string): Promise<Record<str
     },
     redirect: "manual",
   });
-  return readJsonResponse(response, url.href, label);
+  return readJsonResponse(response, sanitizeInstagramUrl(url), label);
 }
 
 async function fetchWithRedirects(start: URL, init: RequestInit): Promise<Response> {
@@ -270,18 +287,24 @@ async function fetchWithRedirects(start: URL, init: RequestInit): Promise<Respon
       const location = response.headers.get("location");
       await response.body?.cancel();
       if (!location) {
-        throw new MarketError("REDIRECT_NO_LOCATION", `redirect from ${current.href} had no location header`);
+        throw new MarketError(
+          "REDIRECT_NO_LOCATION",
+          `redirect from ${sanitizeInstagramUrl(current)} had no location header`,
+        );
       }
       let next: URL;
       try {
         next = new URL(location, current);
       } catch {
-        throw new MarketError("REDIRECT_INVALID_LOCATION", `invalid redirect location from ${current.href}`);
+        throw new MarketError(
+          "REDIRECT_INVALID_LOCATION",
+          `invalid redirect location from ${sanitizeInstagramUrl(current)}`,
+        );
       }
       if (!isInstagramHost(next.hostname)) {
         throw new MarketError(
           "REDIRECT_UNTRUSTED",
-          `redirect from ${current.href} left graph.facebook.com (${next.hostname})`,
+          `redirect from ${sanitizeInstagramUrl(current)} left graph.facebook.com (${next.hostname})`,
         );
       }
       current = next;
@@ -291,7 +314,7 @@ async function fetchWithRedirects(start: URL, init: RequestInit): Promise<Respon
     return response;
   }
 
-  throw new MarketError("TOO_MANY_REDIRECTS", `too many redirects resolving ${start.href}`);
+  throw new MarketError("TOO_MANY_REDIRECTS", `too many redirects resolving ${sanitizeInstagramUrl(start)}`);
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
@@ -300,10 +323,13 @@ async function fetchWithTimeout(url: string, init: RequestInit): Promise<Respons
     response = await fetch(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   } catch (err) {
     if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
-      throw new MarketError("TIMEOUT", `instagram request timed out: ${url}`);
+      throw new MarketError("TIMEOUT", `instagram request timed out: ${sanitizeInstagramUrl(url)}`);
     }
     const message = err instanceof Error ? err.message : String(err);
-    throw new MarketError("HTTP_ERROR", `instagram request failed: ${message}`);
+    throw new MarketError(
+      "HTTP_ERROR",
+      `instagram request failed: ${sanitizeInstagramUrl(url)}: ${sanitizeInstagramUrl(message)}`,
+    );
   }
   return response;
 }
@@ -341,7 +367,7 @@ async function readJsonResponse(response: Response, url: string, label: string):
 
   let json: unknown;
   try {
-    json = JSON.parse(text);
+    json = JSON.parse(quoteJsonIntegerField(text, "id"));
   } catch {
     throw new MarketError("INVALID_PAYLOAD", `instagram ${label} returned malformed JSON for ${url}`);
   }

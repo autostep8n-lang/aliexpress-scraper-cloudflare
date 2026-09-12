@@ -83,7 +83,7 @@ export function parseInstagramHashtagSearchResponse(payload: unknown): Instagram
   for (const item of items) {
     const record = asRecord(item);
     if (!record) continue;
-    const id = typeof record.id === "string" ? record.id.trim() : "";
+    const id = asInstagramId(record.id);
     const name = typeof record.name === "string" ? record.name.trim() : "";
     if (id === "" || name === "") continue;
     return { id, name };
@@ -119,7 +119,7 @@ export function parseInstagramMediaResponse(payload: unknown): InstagramMedia[] 
   for (const item of items) {
     const record = asRecord(item);
     if (!record) continue;
-    const id = typeof record.id === "string" ? record.id.trim() : "";
+    const id = asInstagramId(record.id);
     if (id === "") continue;
     const timestamp = typeof record.timestamp === "string" ? record.timestamp : "";
     if (timestamp === "" || Number.isNaN(new Date(timestamp).getTime())) continue;
@@ -272,6 +272,14 @@ function nullableString(value: unknown): string | null {
 function asString(value: unknown): string {
   if (typeof value === "string") return value.trim();
   if (typeof value === "number") return String(value);
+  return "";
+}
+
+function asInstagramId(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return String(value);
+  }
   return "";
 }
 

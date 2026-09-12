@@ -9,6 +9,7 @@ import {
   toInstagramHashtag,
   toInstagramObservationRow,
 } from "../../src/market/instagram-engine";
+import { quoteJsonIntegerField } from "../../src/market/instagram-oauth";
 import { MarketError } from "../../src/market/types";
 
 const HASHTAG_SEARCH_FIXTURE = JSON.parse(
@@ -117,6 +118,31 @@ describe("parseInstagramHashtagSearchResponse", () => {
     };
     expect(parseInstagramHashtagSearchResponse(payload)).toEqual({ id: "2", name: "blue" });
   });
+
+  it("preserves a 17-digit hashtag id quoted before JSON.parse", () => {
+    const raw = '{"data":[{"id":28689534960681881,"name":"smartwatch"}]}';
+    expect(String(JSON.parse(raw).data[0].id)).not.toBe("28689534960681881");
+    const quoted = quoteJsonIntegerField(raw, "id");
+    expect(parseInstagramHashtagSearchResponse(JSON.parse(quoted))).toEqual({
+      id: "28689534960681881",
+      name: "smartwatch",
+    });
+  });
+
+  it("skips an already-rounded unsafe numeric hashtag id", () => {
+    expect(
+      parseInstagramHashtagSearchResponse({
+        data: [{ id: 17841401234567890, name: "smartwatch" }],
+      }),
+    ).toBeNull();
+  });
+
+  it("accepts a safe-integer hashtag id as an exact string", () => {
+    expect(parseInstagramHashtagSearchResponse({ data: [{ id: 12345, name: "ok" }] })).toEqual({
+      id: "12345",
+      name: "ok",
+    });
+  });
 });
 
 describe("parseInstagramMediaResponse", () => {
@@ -157,6 +183,31 @@ describe("parseInstagramMediaResponse", () => {
 
     expect(media.map((item) => item.id)).toEqual(["ok1", "ok2"]);
     expect(media[1].mediaType).toBe("UNKNOWN");
+  });
+
+  it("preserves a 17-digit media id quoted before JSON.parse", () => {
+    const raw =
+      '{"data":[{"id":28689534960681881,"media_type":"IMAGE","timestamp":"2026-01-01T00:00:00+0000","like_count":10,"comments_count":1}]}';
+    expect(String(JSON.parse(raw).data[0].id)).not.toBe("28689534960681881");
+    const quoted = quoteJsonIntegerField(raw, "id");
+    const media = parseInstagramMediaResponse(JSON.parse(quoted));
+    expect(media).toHaveLength(1);
+    expect(media[0].id).toBe("28689534960681881");
+  });
+
+  it("skips an already-rounded unsafe numeric media id", () => {
+    const media = parseInstagramMediaResponse({
+      data: [
+        {
+          id: 28689534960681881,
+          media_type: "IMAGE",
+          timestamp: "2026-01-01T00:00:00+0000",
+          like_count: 1,
+          comments_count: 0,
+        },
+      ],
+    });
+    expect(media).toEqual([]);
   });
 
   it("maps string counters, missing counters to 0 and empty captions to null", () => {
