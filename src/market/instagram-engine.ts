@@ -64,9 +64,59 @@ export function toInstagramHashtag(keyword: string): string {
 }
 
 /**
+ * True when a caption is local evidence for the normalized query. Matches a
+ * `#hashtag` token (not a longer tag) or the keyword as a case-insensitive
+ * substring. Empty/null captions never match. This is connected-account
+ * filtering only; it is not Instagram-wide hashtag search.
+ */
+export function captionMatchesInstagramQuery(
+  caption: string | null,
+  query: NormalizedInstagramQuery,
+): boolean {
+  if (!caption) return false;
+  const lower = caption.toLowerCase();
+  const tag = `#${query.hashtag}`;
+  let from = 0;
+  while (from <= lower.length - tag.length) {
+    const idx = lower.indexOf(tag, from);
+    if (idx === -1) break;
+    const after = lower.charAt(idx + tag.length);
+    if (after === "" || /[^a-z0-9_]/.test(after)) return true;
+    from = idx + 1;
+  }
+  const keyword = query.keyword.toLowerCase();
+  return keyword !== "" && lower.includes(keyword);
+}
+
+/**
+ * Builds the own-media collection for a query: matching captions only.
+ * `hashtagId` is the normalized hashtag string, never a Graph hashtag id.
+ * `recentMedia` is matching media by timestamp desc; `topMedia` is the same
+ * set ranked by engagement. No matches yield the existing empty collection
+ * shape used for a zero signal.
+ */
+export function buildOwnMediaCollection(
+  media: InstagramMedia[],
+  query: NormalizedInstagramQuery,
+): InstagramMediaCollection {
+  const matching = media.filter((item) => captionMatchesInstagramQuery(item.caption, query));
+  if (matching.length === 0) {
+    return { hashtagId: query.hashtag, hashtagName: query.hashtag, topMedia: [], recentMedia: [] };
+  }
+  const recentMedia = [...matching].sort(compareMediaByRecency);
+  const topMedia = [...matching].sort(compareMedia);
+  return {
+    hashtagId: query.hashtag,
+    hashtagName: query.hashtag,
+    topMedia,
+    recentMedia,
+  };
+}
+
+/**
  * Parses an IG Hashtag Search (`hashtag_search`) payload into the resolved
- * hashtag. `hashtag_search` returns at most one entry in `data`; the first
- * usable entry wins. Returns null when no hashtag is found.
+ * hashtag. Kept for compatibility; the collector no longer calls
+ * ig_hashtag_search. Returns null when no hashtag is found.
  *
  * Structurally invalid payloads throw `INVALID_PAYLOAD`.
  */
@@ -92,8 +142,7 @@ export function parseInstagramHashtagSearchResponse(payload: unknown): Instagram
 }
 
 /**
- * Parses an IG Hashtag media edge (`top_media` or `recent_media`) payload into
- * a list of media items.
+ * Parses a Graph `GET /me/media` payload into a list of media items.
  *
  * Rules:
  * - `data` must be an array
@@ -142,14 +191,13 @@ export function parseInstagramMediaResponse(payload: unknown): InstagramMedia[] 
 }
 
 /**
- * Assembles the final aggregate `InstagramSignal` from the parsed hashtag
- * media collection and the normalized query.
+ * Assembles the final aggregate `InstagramSignal` from a media collection
+ * and the normalized query.
  *
- * The `top_media` and `recent_media` items are merged and deduplicated by id
- * (the first occurrence wins, so a `top_media` copy of a media item that also
- * appears in `recent_media` is kept). The unique media are deterministically
- * ranked (engagement desc, timestamp desc, id asc) and capped at the query
- * `limit`; the aggregates are computed over the full unique set.
+ * `topMedia` and `recentMedia` are merged and deduplicated by id (the first
+ * occurrence wins). Unique media are ranked (engagement desc, timestamp desc,
+ * id asc) and capped at the query `limit`; aggregates use the full unique set.
+ * Own-media collections pass the same matching items as both lists.
  */
 export function buildInstagramSignal(
   collection: InstagramMediaCollection,
@@ -232,6 +280,11 @@ function mergeUnique(top: InstagramMedia[], recent: InstagramMedia[]): Instagram
 
 function compareMedia(a: InstagramMedia, b: InstagramMedia): number {
   if (a.engagement !== b.engagement) return b.engagement - a.engagement;
+  if (a.timestamp !== b.timestamp) return a.timestamp < b.timestamp ? 1 : -1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+function compareMediaByRecency(a: InstagramMedia, b: InstagramMedia): number {
   if (a.timestamp !== b.timestamp) return a.timestamp < b.timestamp ? 1 : -1;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }

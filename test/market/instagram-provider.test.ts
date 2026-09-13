@@ -4,9 +4,7 @@ import { join } from "node:path";
 import type { Env } from "../../src/env";
 import { normalizeInstagramQuery } from "../../src/market/instagram-engine";
 import {
-  buildHashtagSearchUrl,
-  buildRecentMediaUrl,
-  buildTopMediaUrl,
+  buildMeMediaUrl,
   getInstagramProvider,
   instagramModule,
   isInstagramHost,
@@ -16,16 +14,8 @@ import {
 import { MarketError } from "../../src/market/types";
 import { createMockPostgrest, type MockPostgrest } from "../helpers/postgrest-mock";
 
-const HASHTAG_SEARCH_FIXTURE = JSON.parse(
-  readFileSync(join(__dirname, "..", "fixtures", "instagram-hashtag-search.json"), "utf8"),
-) as Record<string, unknown>;
-
-const TOP_MEDIA_FIXTURE = JSON.parse(
-  readFileSync(join(__dirname, "..", "fixtures", "instagram-top-media.json"), "utf8"),
-) as Record<string, unknown>;
-
-const RECENT_MEDIA_FIXTURE = JSON.parse(
-  readFileSync(join(__dirname, "..", "fixtures", "instagram-recent-media.json"), "utf8"),
+const ME_MEDIA_FIXTURE = JSON.parse(
+  readFileSync(join(__dirname, "..", "fixtures", "instagram-me-media.json"), "utf8"),
 ) as Record<string, unknown>;
 
 const SUPABASE_URL = "https://example.supabase.co";
@@ -65,12 +55,8 @@ class MemoryKV {
 }
 
 interface InstagramRouterOptions {
-  hashtagSearch?: Response;
-  topMedia?: Response;
-  recentMedia?: Response;
-  hashtagSearchHandler?: (url: URL, init?: RequestInit) => Response | Promise<Response>;
-  topMediaHandler?: (url: URL, init?: RequestInit) => Response | Promise<Response>;
-  recentMediaHandler?: (url: URL, init?: RequestInit) => Response | Promise<Response>;
+  meMedia?: Response;
+  meMediaHandler?: (url: URL, init?: RequestInit) => Response | Promise<Response>;
 }
 
 function instagramRouter(server: MockPostgrest, opts: InstagramRouterOptions = {}): typeof fetch {
@@ -81,22 +67,10 @@ function instagramRouter(server: MockPostgrest, opts: InstagramRouterOptions = {
         : input instanceof URL
           ? input
           : new URL((input as Request).url);
-    if (url.hostname === "graph.facebook.com") {
-      if (url.pathname.endsWith("/ig_hashtag_search")) {
-        if (opts.hashtagSearchHandler) return Promise.resolve(opts.hashtagSearchHandler(url, init));
-        if (opts.hashtagSearch) return Promise.resolve(opts.hashtagSearch);
-        return Promise.resolve(jsonResponse(HASHTAG_SEARCH_FIXTURE));
-      }
-      if (url.pathname.endsWith("/top_media")) {
-        if (opts.topMediaHandler) return Promise.resolve(opts.topMediaHandler(url, init));
-        if (opts.topMedia) return Promise.resolve(opts.topMedia);
-        return Promise.resolve(jsonResponse(TOP_MEDIA_FIXTURE));
-      }
-      if (url.pathname.endsWith("/recent_media")) {
-        if (opts.recentMediaHandler) return Promise.resolve(opts.recentMediaHandler(url, init));
-        if (opts.recentMedia) return Promise.resolve(opts.recentMedia);
-        return Promise.resolve(jsonResponse(RECENT_MEDIA_FIXTURE));
-      }
+    if (url.hostname === "graph.instagram.com" && (url.pathname === "/me/media" || url.pathname.endsWith("/me/media"))) {
+      if (opts.meMediaHandler) return Promise.resolve(opts.meMediaHandler(url, init));
+      if (opts.meMedia) return Promise.resolve(opts.meMedia);
+      return Promise.resolve(jsonResponse(ME_MEDIA_FIXTURE));
     }
     return server.fetch(input, init);
   };
@@ -139,12 +113,12 @@ function configuredEnv(overrides: Partial<Env> = {}): Env {
 }
 
 describe("isInstagramHost", () => {
-  it("accepts graph.facebook.com, case-insensitively", () => {
-    expect(isInstagramHost("graph.facebook.com")).toBe(true);
-    expect(isInstagramHost("GRAPH.FACEBOOK.COM")).toBe(true);
-    expect(isInstagramHost("graph.facebook.com.evil.com")).toBe(false);
-    expect(isInstagramHost("facebook.com")).toBe(false);
-    expect(isInstagramHost("www.googleapis.com")).toBe(false);
+  it("accepts graph.instagram.com, case-insensitively", () => {
+    expect(isInstagramHost("graph.instagram.com")).toBe(true);
+    expect(isInstagramHost("GRAPH.INSTAGRAM.COM")).toBe(true);
+    expect(isInstagramHost("graph.instagram.com.evil.com")).toBe(false);
+    expect(isInstagramHost("graph.facebook.com")).toBe(false);
+    expect(isInstagramHost("instagram.com")).toBe(false);
     expect(isInstagramHost("example.com")).toBe(false);
   });
 });
@@ -152,17 +126,17 @@ describe("isInstagramHost", () => {
 describe("sanitizeInstagramUrl", () => {
   it("redacts access_token while keeping host, path, and other query params", () => {
     const url =
-      "https://graph.facebook.com/v26.0/ig_hashtag_search?user_id=iguser&q=smartwatch&access_token=secret-token-value";
+      "https://graph.instagram.com/me/media?fields=id,caption&limit=25&access_token=secret-token-value";
     const sanitized = sanitizeInstagramUrl(url);
-    expect(sanitized).toContain("https://graph.facebook.com/v26.0/ig_hashtag_search");
-    expect(sanitized).toContain("user_id=iguser");
-    expect(sanitized).toContain("q=smartwatch");
+    expect(sanitized).toContain("https://graph.instagram.com/me/media");
+    expect(sanitized).toMatch(/fields=id(%2C|,)caption/);
+    expect(sanitized).toContain("limit=25");
     expect(sanitized).toContain("access_token=REDACTED");
     expect(sanitized).not.toContain("secret-token-value");
   });
 
   it("redacts client_secret and appsecret_proof", () => {
-    const url = new URL("https://graph.facebook.com/v26.0/me");
+    const url = new URL("https://graph.instagram.com/me");
     url.searchParams.set("client_secret", "app-secret");
     url.searchParams.set("appsecret_proof", "proof-value");
     const sanitized = sanitizeInstagramUrl(url);
@@ -179,35 +153,17 @@ describe("getInstagramProvider", () => {
   });
 });
 
-describe("buildHashtagSearchUrl", () => {
-  it("builds the Graph API hashtag_search URL", () => {
-    const url = buildHashtagSearchUrl(IG_USER_ID, "smartwatch", ACCESS_TOKEN);
-    expect(url.hostname).toBe("graph.facebook.com");
-    expect(url.pathname).toBe("/v26.0/ig_hashtag_search");
-    expect(url.searchParams.get("user_id")).toBe(IG_USER_ID);
-    expect(url.searchParams.get("q")).toBe("smartwatch");
-    expect(url.searchParams.get("access_token")).toBe(ACCESS_TOKEN);
-  });
-});
-
-describe("buildTopMediaUrl", () => {
-  it("builds the Graph API top_media URL with the media fields and limit", () => {
-    const url = buildTopMediaUrl("17841401234567890", 10, ACCESS_TOKEN);
-    expect(url.pathname).toBe("/v26.0/17841401234567890/top_media");
+describe("buildMeMediaUrl", () => {
+  it("builds GET graph.instagram.com/me/media with the media fields and limit", () => {
+    const url = buildMeMediaUrl(10, ACCESS_TOKEN);
+    expect(url.hostname).toBe("graph.instagram.com");
+    expect(url.pathname).toBe("/me/media");
     expect(url.searchParams.get("fields")).toContain("id");
+    expect(url.searchParams.get("fields")).toContain("caption");
     expect(url.searchParams.get("fields")).toContain("like_count");
+    expect(url.searchParams.get("fields")).toContain("comments_count");
     expect(url.searchParams.get("fields")).toContain("media_url");
     expect(url.searchParams.get("limit")).toBe("10");
-    expect(url.searchParams.get("access_token")).toBe(ACCESS_TOKEN);
-  });
-});
-
-describe("buildRecentMediaUrl", () => {
-  it("builds the Graph API recent_media URL with the media fields and limit", () => {
-    const url = buildRecentMediaUrl("17841401234567890", 25, ACCESS_TOKEN);
-    expect(url.pathname).toBe("/v26.0/17841401234567890/recent_media");
-    expect(url.searchParams.get("fields")).toContain("timestamp");
-    expect(url.searchParams.get("limit")).toBe("25");
     expect(url.searchParams.get("access_token")).toBe(ACCESS_TOKEN);
   });
 });
@@ -220,66 +176,75 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
     vi.restoreAllMocks();
   });
 
-  it("fetches hashtag_search then top_media and recent_media and returns a parsed aggregate signal", async () => {
+  it("fetches /me/media, filters captions, and returns a parsed own-media signal", async () => {
     server = createMockPostgrest();
     const seen: string[] = [];
     vi.stubGlobal(
       "fetch",
       instagramRouter(server, {
-        hashtagSearchHandler: (url) => {
-          seen.push("hashtag_search");
-          expect(url.pathname).toBe("/v26.0/ig_hashtag_search");
-          expect(url.searchParams.get("user_id")).toBe(IG_USER_ID);
-          expect(url.searchParams.get("q")).toBe("smartwatch");
+        meMediaHandler: (url) => {
+          seen.push("me_media");
+          expect(url.hostname).toBe("graph.instagram.com");
+          expect(url.pathname).toBe("/me/media");
+          expect(url.searchParams.get("fields")).toContain("id");
+          expect(url.searchParams.get("fields")).toContain("caption");
           expect(url.searchParams.get("access_token")).toBe(ACCESS_TOKEN);
-          return jsonResponse(HASHTAG_SEARCH_FIXTURE);
-        },
-        topMediaHandler: (url) => {
-          seen.push("top_media");
-          expect(url.pathname).toBe("/v26.0/17841401234567890/top_media");
-          return jsonResponse(TOP_MEDIA_FIXTURE);
-        },
-        recentMediaHandler: (url) => {
-          seen.push("recent_media");
-          expect(url.pathname).toBe("/v26.0/17841401234567890/recent_media");
-          return jsonResponse(RECENT_MEDIA_FIXTURE);
+          expect(url.href).not.toContain("ig_hashtag_search");
+          expect(url.href).not.toContain("top_media");
+          expect(url.href).not.toContain("recent_media");
+          return jsonResponse(ME_MEDIA_FIXTURE);
         },
       }),
     );
 
     const signals = await officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx);
 
-    expect(seen).toEqual(["hashtag_search", "top_media", "recent_media"]);
+    expect(seen).toEqual(["me_media"]);
     expect(signals).toHaveLength(1);
     expect(signals[0].keyword).toBe("smart watch");
     expect(signals[0].hashtag).toBe("smartwatch");
     expect(signals[0].mediaCount).toBe(6);
+    expect(signals[0].topMediaCount).toBe(6);
+    expect(signals[0].recentMediaCount).toBe(6);
     expect(signals[0].totalEngagement).toBe(5739);
+    expect(signals[0].topMedia.map((item) => item.id)).toEqual([
+      "media_top3",
+      "media_top1",
+      "media_top2",
+      "media_rec1",
+      "media_top4",
+      "media_rec2",
+    ]);
+    expect(signals[0].topMedia.map((item) => item.id)).not.toContain("media_unrelated");
     expect(signals[0].capturedAt).toBeTruthy();
   });
 
-  it("skips the media calls when the hashtag cannot be resolved", async () => {
+  it("returns a zero signal when no own-media captions match the query", async () => {
     server = createMockPostgrest();
-    const seen: string[] = [];
     vi.stubGlobal(
       "fetch",
       instagramRouter(server, {
-        hashtagSearchHandler: () => {
-          seen.push("hashtag_search");
-          return jsonResponse({ data: [] });
-        },
-        topMediaHandler: () => {
-          seen.push("top_media");
-          return jsonResponse(TOP_MEDIA_FIXTURE);
-        },
+        meMedia: jsonResponse({
+          data: [
+            {
+              id: "media_unrelated",
+              media_type: "IMAGE",
+              caption: "Sunset at the beach #travel",
+              timestamp: "2026-03-03T10:00:00+0000",
+              like_count: 9999,
+              comments_count: 999,
+            },
+          ],
+        }),
       }),
     );
 
     const signals = await officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx);
 
-    expect(seen).toEqual(["hashtag_search"]);
     expect(signals[0].mediaCount).toBe(0);
     expect(signals[0].topMedia).toEqual([]);
+    expect(signals[0].totalEngagement).toBe(0);
+    expect(signals[0].hashtag).toBe("smartwatch");
   });
 
   it("throws INSTAGRAM_NOT_CONFIGURED before any network call when the token is missing", async () => {
@@ -308,9 +273,9 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("maps an invalid-token Graph error (code 190) on hashtag_search to AUTH_ERROR", async () => {
+  it("maps an invalid-token Graph error (code 190) on /me/media to AUTH_ERROR", async () => {
     server = createMockPostgrest();
-    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: graphErrorResponse(190) }));
+    vi.stubGlobal("fetch", instagramRouter(server, { meMedia: graphErrorResponse(190) }));
 
     await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({
       code: "AUTH_ERROR",
@@ -319,7 +284,7 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
 
   it("never leaks access_token from a Graph AUTH_ERROR message", async () => {
     server = createMockPostgrest();
-    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: graphErrorResponse(190) }));
+    vi.stubGlobal("fetch", instagramRouter(server, { meMedia: graphErrorResponse(190) }));
 
     const error = await officialApiInstagramProvider
       .fetchSignals(NORMALIZED, configuredEnv(), ctx)
@@ -329,13 +294,13 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
     expect((error as MarketError).code).toBe("AUTH_ERROR");
     expect(message).not.toContain(ACCESS_TOKEN);
     expect(message).toContain("access_token=REDACTED");
-    expect(message).toContain("/v26.0/ig_hashtag_search");
+    expect(message).toContain("/me/media");
     expect(JSON.stringify(error)).not.toContain(ACCESS_TOKEN);
   });
 
   it("never leaks access_token from a Graph RATE_LIMITED message", async () => {
     server = createMockPostgrest();
-    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: graphErrorResponse(613) }));
+    vi.stubGlobal("fetch", instagramRouter(server, { meMedia: graphErrorResponse(613) }));
 
     const error = await officialApiInstagramProvider
       .fetchSignals(NORMALIZED, configuredEnv(), ctx)
@@ -366,7 +331,7 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
     expect(networkError).toBeInstanceOf(MarketError);
     expect((networkError as MarketError).message).not.toContain(ACCESS_TOKEN);
     expect((networkError as MarketError).message).toContain("access_token=REDACTED");
-    expect((networkError as MarketError).message).toContain("/v26.0/ig_hashtag_search");
+    expect((networkError as MarketError).message).toContain("/me/media");
   });
 
   it("never leaks access_token when fetch throws an error whose message contains the request URL", async () => {
@@ -385,21 +350,19 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
     expect((error as MarketError).code).toBe("HTTP_ERROR");
     expect(message).not.toContain(ACCESS_TOKEN);
     expect(JSON.stringify(error)).not.toContain(ACCESS_TOKEN);
-    expect(message).toContain("graph.facebook.com");
-    expect(message).toContain("/v26.0/ig_hashtag_search");
+    expect(message).toContain("graph.instagram.com");
+    expect(message).toContain("/me/media");
     expect(message).toContain("access_token=REDACTED");
   });
 
-  it("preserves a 17-digit hashtag id from unquoted Graph JSON", async () => {
+  it("preserves a 17-digit media id from unquoted Graph JSON", async () => {
     server = createMockPostgrest();
-    const rawHashtag = '{"data":[{"id":28689534960681881,"name":"smartwatch"}]}';
-    const rawMedia = '{"data":[{"id":28689534960681881,"media_type":"IMAGE","timestamp":"2026-01-01T00:00:00+0000","like_count":1,"comments_count":0}]}';
+    const rawMedia =
+      '{"data":[{"id":28689534960681881,"media_type":"IMAGE","caption":"#smartwatch","timestamp":"2026-01-01T00:00:00+0000","like_count":1,"comments_count":0}]}';
     vi.stubGlobal(
       "fetch",
       instagramRouter(server, {
-        hashtagSearch: new Response(rawHashtag, { status: 200, headers: { "content-type": "application/json" } }),
-        topMedia: new Response(rawMedia, { status: 200, headers: { "content-type": "application/json" } }),
-        recentMedia: new Response('{"data":[]}', { status: 200, headers: { "content-type": "application/json" } }),
+        meMedia: new Response(rawMedia, { status: 200, headers: { "content-type": "application/json" } }),
       }),
     );
 
@@ -410,16 +373,16 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
 
   it("maps an expired-session Graph error (code 102) to AUTH_ERROR", async () => {
     server = createMockPostgrest();
-    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: graphErrorResponse(102) }));
+    vi.stubGlobal("fetch", instagramRouter(server, { meMedia: graphErrorResponse(102) }));
 
     await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({
       code: "AUTH_ERROR",
     });
   });
 
-  it("maps the 30-hashtag/7-day Graph limit (code 613) to RATE_LIMITED", async () => {
+  it("maps a Graph rate-limit error (code 613) to RATE_LIMITED", async () => {
     server = createMockPostgrest();
-    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: graphErrorResponse(613) }));
+    vi.stubGlobal("fetch", instagramRouter(server, { meMedia: graphErrorResponse(613) }));
 
     await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({
       code: "RATE_LIMITED",
@@ -428,43 +391,34 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
 
   it("maps the app request-limit Graph error (code 4) to RATE_LIMITED", async () => {
     server = createMockPostgrest();
-    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: graphErrorResponse(4) }));
+    vi.stubGlobal("fetch", instagramRouter(server, { meMedia: graphErrorResponse(4) }));
 
     await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({
       code: "RATE_LIMITED",
     });
   });
 
-  it("maps a 613 Graph error on the top_media call to RATE_LIMITED", async () => {
+  it("maps a 429 on the /me/media call to RATE_LIMITED", async () => {
     server = createMockPostgrest();
-    vi.stubGlobal("fetch", instagramRouter(server, { topMedia: graphErrorResponse(613) }));
+    vi.stubGlobal("fetch", instagramRouter(server, { meMedia: new Response("slow down", { status: 429 }) }));
 
     await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({
       code: "RATE_LIMITED",
     });
   });
 
-  it("maps a 429 on the hashtag_search call to RATE_LIMITED", async () => {
+  it("maps a 401 on the /me/media call to AUTH_ERROR", async () => {
     server = createMockPostgrest();
-    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: new Response("slow down", { status: 429 }) }));
-
-    await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({
-      code: "RATE_LIMITED",
-    });
-  });
-
-  it("maps a 401 on the hashtag_search call to AUTH_ERROR", async () => {
-    server = createMockPostgrest();
-    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: new Response("unauthorized", { status: 401 }) }));
+    vi.stubGlobal("fetch", instagramRouter(server, { meMedia: new Response("unauthorized", { status: 401 }) }));
 
     await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({
       code: "AUTH_ERROR",
     });
   });
 
-  it("maps a 403 on the hashtag_search call to AUTH_ERROR", async () => {
+  it("maps a 403 on the /me/media call to AUTH_ERROR", async () => {
     server = createMockPostgrest();
-    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: new Response("forbidden", { status: 403 }) }));
+    vi.stubGlobal("fetch", instagramRouter(server, { meMedia: new Response("forbidden", { status: 403 }) }));
 
     await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({
       code: "AUTH_ERROR",
@@ -473,16 +427,16 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
 
   it("maps a 400 invalid-parameter Graph error (code 100) to HTTP_ERROR", async () => {
     server = createMockPostgrest();
-    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: graphErrorResponse(100) }));
+    vi.stubGlobal("fetch", instagramRouter(server, { meMedia: graphErrorResponse(100) }));
 
     await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({
       code: "HTTP_ERROR",
     });
   });
 
-  it("rejects redirects that leave graph.facebook.com with REDIRECT_UNTRUSTED", async () => {
+  it("rejects redirects that leave graph.instagram.com with REDIRECT_UNTRUSTED", async () => {
     server = createMockPostgrest();
-    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: redirectResponse("https://evil.example.com/phish") }));
+    vi.stubGlobal("fetch", instagramRouter(server, { meMedia: redirectResponse("https://evil.example.com/phish") }));
 
     await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({
       code: "REDIRECT_UNTRUSTED",
@@ -491,7 +445,7 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
 
   it("rejects redirects without a location header with REDIRECT_NO_LOCATION", async () => {
     server = createMockPostgrest();
-    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: new Response(null, { status: 302 }) }));
+    vi.stubGlobal("fetch", instagramRouter(server, { meMedia: new Response(null, { status: 302 }) }));
 
     await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({
       code: "REDIRECT_NO_LOCATION",
@@ -501,8 +455,8 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
   it("rejects redirect loops with TOO_MANY_REDIRECTS", async () => {
     server = createMockPostgrest();
     let hops = 0;
-    const handler = (): Response => redirectResponse(`https://graph.facebook.com/v26.0/ig_hashtag_search?hop=${++hops}`);
-    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearchHandler: handler }));
+    const handler = (): Response => redirectResponse(`https://graph.instagram.com/me/media?hop=${++hops}`);
+    vi.stubGlobal("fetch", instagramRouter(server, { meMediaHandler: handler }));
 
     await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({
       code: "TOO_MANY_REDIRECTS",
@@ -527,9 +481,9 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
     });
   });
 
-  it("rejects malformed hashtag_search JSON with INVALID_PAYLOAD", async () => {
+  it("rejects malformed /me/media JSON with INVALID_PAYLOAD", async () => {
     server = createMockPostgrest();
-    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: new Response("this is not json", { status: 200 }) }));
+    vi.stubGlobal("fetch", instagramRouter(server, { meMedia: new Response("this is not json", { status: 200 }) }));
 
     await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({
       code: "INVALID_PAYLOAD",
@@ -541,7 +495,7 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
     vi.stubGlobal(
       "fetch",
       instagramRouter(server, {
-        hashtagSearch: new Response("x", { status: 200, headers: { "content-length": "900000" } }),
+        meMedia: new Response("x", { status: 200, headers: { "content-length": "900000" } }),
       }),
     );
 
@@ -552,13 +506,13 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
 
   it("serves cached signals without re-fetching when SCRAPE_CACHE is present", async () => {
     server = createMockPostgrest();
-    let hashtagSearchCalls = 0;
+    let meMediaCalls = 0;
     vi.stubGlobal(
       "fetch",
       instagramRouter(server, {
-        hashtagSearchHandler: () => {
-          hashtagSearchCalls += 1;
-          return jsonResponse(HASHTAG_SEARCH_FIXTURE);
+        meMediaHandler: () => {
+          meMediaCalls += 1;
+          return jsonResponse(ME_MEDIA_FIXTURE);
         },
       }),
     );
@@ -570,7 +524,78 @@ describe("officialApiInstagramProvider.fetchSignals", () => {
 
     expect(first).toHaveLength(1);
     expect(second).toHaveLength(1);
-    expect(hashtagSearchCalls).toBe(1);
+    expect(meMediaCalls).toBe(1);
+  });
+
+  it("follows allowlisted paging.next and merges unique own media", async () => {
+    server = createMockPostgrest();
+    const page1 = {
+      data: [
+        {
+          id: "media_page1",
+          media_type: "IMAGE",
+          caption: "page one #smartwatch",
+          timestamp: "2026-03-02T00:00:00+0000",
+          like_count: 10,
+          comments_count: 1,
+        },
+      ],
+      paging: { next: "https://graph.instagram.com/me/media?after=cursor1" },
+    };
+    const page2 = {
+      data: [
+        {
+          id: "media_page2",
+          media_type: "IMAGE",
+          caption: "page two #smartwatch",
+          timestamp: "2026-03-01T00:00:00+0000",
+          like_count: 50,
+          comments_count: 5,
+        },
+        {
+          id: "media_page1",
+          media_type: "IMAGE",
+          caption: "page one duplicate #smartwatch",
+          timestamp: "2026-03-02T00:00:00+0000",
+          like_count: 10,
+          comments_count: 1,
+        },
+      ],
+    };
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      instagramRouter(server, {
+        meMediaHandler: (url) => {
+          seen.push(url.searchParams.get("after") ?? "first");
+          if (url.searchParams.get("after") === "cursor1") return jsonResponse(page2);
+          return jsonResponse(page1);
+        },
+      }),
+    );
+
+    const signals = await officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx);
+
+    expect(seen).toEqual(["first", "cursor1"]);
+    expect(signals[0].mediaCount).toBe(2);
+    expect(signals[0].topMedia.map((item) => item.id)).toEqual(["media_page2", "media_page1"]);
+  });
+
+  it("rejects paging.next that leaves graph.instagram.com", async () => {
+    server = createMockPostgrest();
+    vi.stubGlobal(
+      "fetch",
+      instagramRouter(server, {
+        meMedia: jsonResponse({
+          data: [],
+          paging: { next: "https://evil.example.com/steal" },
+        }),
+      }),
+    );
+
+    await expect(officialApiInstagramProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx)).rejects.toMatchObject({
+      code: "REDIRECT_UNTRUSTED",
+    });
   });
 });
 
@@ -626,7 +651,7 @@ describe("instagramModule.collect", () => {
 
   it("propagates provider errors as typed MarketError", async () => {
     server = createMockPostgrest();
-    vi.stubGlobal("fetch", instagramRouter(server, { hashtagSearch: new Response("slow down", { status: 429 }) }));
+    vi.stubGlobal("fetch", instagramRouter(server, { meMedia: new Response("slow down", { status: 429 }) }));
 
     const error = await instagramModule.collect({ keyword: "phone" }, configuredEnv(), ctx).catch((err: unknown) => err);
     expect(error).toBeInstanceOf(MarketError);

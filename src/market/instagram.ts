@@ -1,8 +1,8 @@
 import type { Env } from "../env";
 import {
   buildInstagramSignal,
+  buildOwnMediaCollection,
   normalizeInstagramQuery,
-  parseInstagramHashtagSearchResponse,
   parseInstagramMediaResponse,
   toInstagramObservationRow,
 } from "./instagram-engine";
@@ -10,8 +10,7 @@ import { quoteJsonIntegerField } from "./instagram-oauth";
 import { upsertInstagramSignals } from "../supabase/repository";
 import {
   MarketError,
-  type InstagramHashtag,
-  type InstagramMediaCollection,
+  type InstagramMedia,
   type InstagramProvider,
   type InstagramQuery,
   type InstagramSignal,
@@ -23,41 +22,34 @@ import {
 /**
  * Instagram - official Graph API provider and collect module (P3.4).
  *
- * Instagram has an official Graph API for reading public hashtag media from a
- * linked Instagram Business/Creator account. Collect still uses a configured
- * long-lived token (`INSTAGRAM_ACCESS_TOKEN`); Business Login lives on
- * `/api/market/instagram/oauth` and `/api/market/instagram/oauth/callback`
- * (see `src/market/instagram-oauth.ts`) so an operator can obtain that token.
- * Every Graph request carries `access_token`. The provider makes three calls
- * per keyword:
+ * Collect uses a configured long-lived token (`INSTAGRAM_ACCESS_TOKEN`);
+ * Business Login lives on `/api/market/instagram/oauth` and
+ * `/api/market/instagram/oauth/callback` (see `src/market/instagram-oauth.ts`)
+ * so an operator can obtain that token. Scope remains
+ * `instagram_business_basic`. Every Graph request carries `access_token`.
  *
- *   1. GET https://graph.facebook.com/v26.0/ig_hashtag_search
- *      `user_id=<ig-user-id>&q=<hashtag>&access_token=<token>` -> the IG hashtag id + name
- *   2. GET https://graph.facebook.com/v26.0/{ig-hashtag-id}/top_media
+ * Public hashtag collection (`ig_hashtag_search`, `{hashtag-id}/top_media`,
+ * `{hashtag-id}/recent_media`) is incompatible with Instagram Business Login
+ * and is not used. The provider instead reads connected-account own media:
+ *
+ *   GET https://graph.instagram.com/me/media
  *      `fields=id,media_type,caption,timestamp,permalink,like_count,
  *       comments_count,media_url&limit&access_token`
- *      -> most popular media (same methodology as instagram.com)
- *   3. GET https://graph.facebook.com/v26.0/{ig-hashtag-id}/recent_media
- *      (same fields) -> most recent media
  *
- * Access requirements (verified against the official documentation, 2026-08):
- * - the account must be an Instagram Business or Creator account linked via
- *   Facebook Login for Business to a Facebook Page the token's user can
- *   manage; `instagram_basic` permission and the "Instagram Public Content
- *   Access" feature (app review) are required
- * - `INSTAGRAM_ACCESS_TOKEN` is the long-lived app-user access token
- *   (~60 days, refreshed out of band); `INSTAGRAM_IG_USER_ID` is the IG
- *   Business/Creator account id
+ * Captions are filtered locally against the normalized query/hashtag.
+ * Matching own media become `recentMedia` (by recency) and `topMedia`
+ * (same set ranked by engagement). `hashtagId` is the normalized hashtag
+ * string, never a Graph hashtag id. No match yields the existing empty
+ * signal. This is own-media evidence, not Instagram-wide public hashtag
+ * intelligence.
  *
- * Rate limiting (verified against the official documentation, 2026-08): each
- * IG Business/Creator account may query at most 30 unique hashtags per rolling
- * 7-day period, and fetching media for a tag counts as querying it. The Graph
- * API surfaces this as a typed error the provider maps to `RATE_LIMITED`
- * instead of retrying in a tight loop.
+ * `INSTAGRAM_ACCESS_TOKEN` is the long-lived Instagram user token
+ * (~60 days); `INSTAGRAM_IG_USER_ID` is the connected IG account id.
  *
  * Security/reliability posture (mirrors `src/market/youtube.ts`):
- * - fixed host allowlist (`graph.facebook.com`) only
+ * - fixed host allowlist (`graph.instagram.com`) only
  * - redirects followed manually, host revalidated on every hop, max 5
+ * - pagination follows `paging.next` only when the host is allowlisted
  * - 15s timeout per hop
  * - ~512KB response-size cap
  * - `429` and Graph error codes 4/17/613 map to `RATE_LIMITED`; codes 190/102
@@ -68,14 +60,13 @@ import {
  * domain model and persistence never depend on how data is fetched.
  */
 
-const API_HOST = "graph.facebook.com";
-const GRAPH_API_VERSION = "v26.0";
-const HASHTAG_SEARCH_PATH = "ig_hashtag_search";
-const TOP_MEDIA_PATH = "top_media";
-const RECENT_MEDIA_PATH = "recent_media";
+const API_HOST = "graph.instagram.com";
+const ME_MEDIA_PATH = "me/media";
 const MEDIA_FIELDS =
   "id,media_type,caption,timestamp,permalink,like_count,comments_count,media_url";
 const MAX_REDIRECTS = 5;
+const MAX_MEDIA_PAGES = 8;
+const MAX_OWN_MEDIA_ITEMS = 200;
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 512 * 1024;
 const CACHE_PREFIX = "market:instagram:";
@@ -131,19 +122,15 @@ class OfficialApiInstagramProvider implements InstagramProvider {
     if (!token) {
       throw new MarketError("INSTAGRAM_NOT_CONFIGURED", "instagram access token (INSTAGRAM_ACCESS_TOKEN) is not configured");
     }
-    const igUserId = env.INSTAGRAM_IG_USER_ID?.trim();
-    if (!igUserId) {
+    if (!env.INSTAGRAM_IG_USER_ID?.trim()) {
       throw new MarketError(
         "INSTAGRAM_NOT_CONFIGURED",
         "instagram business account id (INSTAGRAM_IG_USER_ID) is not configured",
       );
     }
 
-    const searchPayload = await fetchJson(buildHashtagSearchUrl(igUserId, query.hashtag, token), env, "hashtag_search");
-    const hashtag = parseInstagramHashtagSearchResponse(searchPayload);
-
-    const collection = await fetchMediaCollection(hashtag, query, token, env);
-
+    const media = await fetchOwnMedia(query, token, env);
+    const collection = buildOwnMediaCollection(media, query);
     const signals = [buildInstagramSignal(collection, query, capturedAt)];
 
     await writeCache(env, ctx, cacheKey, signals);
@@ -189,25 +176,43 @@ export const instagramModule: MarketIntelligenceModule<InstagramQuery, Instagram
   },
 };
 
-async function fetchMediaCollection(
-  hashtag: InstagramHashtag | null,
-  query: NormalizedInstagramQuery,
-  token: string,
-  env: Env,
-): Promise<InstagramMediaCollection> {
-  if (!hashtag) {
-    return { hashtagId: "", hashtagName: "", topMedia: [], recentMedia: [] };
+async function fetchOwnMedia(query: NormalizedInstagramQuery, token: string, env: Env): Promise<InstagramMedia[]> {
+  const collected: InstagramMedia[] = [];
+  const seen = new Set<string>();
+  let nextUrl: URL | null = buildMeMediaUrl(query.limit, token);
+
+  for (let page = 0; page < MAX_MEDIA_PAGES && nextUrl && collected.length < MAX_OWN_MEDIA_ITEMS; page++) {
+    const payload = await fetchJson(nextUrl, env, "me_media");
+    const pageMedia = parseInstagramMediaResponse(payload);
+    for (const item of pageMedia) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      collected.push(item);
+      if (collected.length >= MAX_OWN_MEDIA_ITEMS) break;
+    }
+    nextUrl = nextPageUrl(payload);
   }
 
-  const topPayload = await fetchJson(buildTopMediaUrl(hashtag.id, query.limit, token), env, "top_media");
-  const recentPayload = await fetchJson(buildRecentMediaUrl(hashtag.id, query.limit, token), env, "recent_media");
+  return collected;
+}
 
-  return {
-    hashtagId: hashtag.id,
-    hashtagName: hashtag.name,
-    topMedia: parseInstagramMediaResponse(topPayload),
-    recentMedia: parseInstagramMediaResponse(recentPayload),
-  };
+function nextPageUrl(payload: Record<string, unknown>): URL | null {
+  const paging = asRecord(payload.paging);
+  const next = typeof paging?.next === "string" ? paging.next.trim() : "";
+  if (!next) return null;
+  let url: URL;
+  try {
+    url = new URL(next);
+  } catch {
+    throw new MarketError("REDIRECT_INVALID_LOCATION", "instagram me_media paging.next is not a valid URL");
+  }
+  if (!isInstagramHost(url.hostname)) {
+    throw new MarketError(
+      "REDIRECT_UNTRUSTED",
+      `instagram me_media paging.next left graph.instagram.com (${url.hostname})`,
+    );
+  }
+  return url;
 }
 
 async function persistSignals(
@@ -241,27 +246,9 @@ async function persistSignals(
   }
 }
 
-/** Builds the Graph API ig_hashtag_search URL for a normalized query. */
-export function buildHashtagSearchUrl(igUserId: string, hashtag: string, token: string): URL {
-  const url = new URL(`https://${API_HOST}/${GRAPH_API_VERSION}/${HASHTAG_SEARCH_PATH}`);
-  url.searchParams.set("user_id", igUserId);
-  url.searchParams.set("q", hashtag);
-  url.searchParams.set("access_token", token);
-  return url;
-}
-
-/** Builds the Graph API top_media URL for an IG hashtag id. */
-export function buildTopMediaUrl(hashtagId: string, limit: number, token: string): URL {
-  const url = new URL(`https://${API_HOST}/${GRAPH_API_VERSION}/${hashtagId}/${TOP_MEDIA_PATH}`);
-  url.searchParams.set("fields", MEDIA_FIELDS);
-  url.searchParams.set("limit", String(limit));
-  url.searchParams.set("access_token", token);
-  return url;
-}
-
-/** Builds the Graph API recent_media URL for an IG hashtag id. */
-export function buildRecentMediaUrl(hashtagId: string, limit: number, token: string): URL {
-  const url = new URL(`https://${API_HOST}/${GRAPH_API_VERSION}/${hashtagId}/${RECENT_MEDIA_PATH}`);
+/** Builds GET https://graph.instagram.com/me/media for connected-account own media. */
+export function buildMeMediaUrl(limit: number, token: string): URL {
+  const url = new URL(`https://${API_HOST}/${ME_MEDIA_PATH}`);
   url.searchParams.set("fields", MEDIA_FIELDS);
   url.searchParams.set("limit", String(limit));
   url.searchParams.set("access_token", token);
@@ -304,7 +291,7 @@ async function fetchWithRedirects(start: URL, init: RequestInit): Promise<Respon
       if (!isInstagramHost(next.hostname)) {
         throw new MarketError(
           "REDIRECT_UNTRUSTED",
-          `redirect from ${sanitizeInstagramUrl(current)} left graph.facebook.com (${next.hostname})`,
+          `redirect from ${sanitizeInstagramUrl(current)} left graph.instagram.com (${next.hostname})`,
         );
       }
       current = next;

@@ -5,16 +5,8 @@ import type { Env } from "../../src/env";
 import { routeRequest } from "../../src/router";
 import { createMockPostgrest, type MockPostgrest } from "../helpers/postgrest-mock";
 
-const HASHTAG_SEARCH_FIXTURE = JSON.parse(
-  readFileSync(join(__dirname, "..", "fixtures", "instagram-hashtag-search.json"), "utf8"),
-) as Record<string, unknown>;
-
-const TOP_MEDIA_FIXTURE = JSON.parse(
-  readFileSync(join(__dirname, "..", "fixtures", "instagram-top-media.json"), "utf8"),
-) as Record<string, unknown>;
-
-const RECENT_MEDIA_FIXTURE = JSON.parse(
-  readFileSync(join(__dirname, "..", "fixtures", "instagram-recent-media.json"), "utf8"),
+const ME_MEDIA_FIXTURE = JSON.parse(
+  readFileSync(join(__dirname, "..", "fixtures", "instagram-me-media.json"), "utf8"),
 ) as Record<string, unknown>;
 
 const SUPABASE_URL = "https://example.supabase.co";
@@ -65,11 +57,8 @@ function graphErrorResponse(code: number, status = 400): Response {
   );
 }
 
-/** Routes graph.facebook.com to fixtures and everything else to the PostgREST mock. */
-function compositeFetch(
-  server: MockPostgrest,
-  opts: { hashtagSearch?: Response; topMedia?: Response; recentMedia?: Response } = {},
-): typeof fetch {
+/** Routes graph.instagram.com/me/media to fixtures and everything else to the PostgREST mock. */
+function compositeFetch(server: MockPostgrest, opts: { meMedia?: Response } = {}): typeof fetch {
   return (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url =
       typeof input === "string"
@@ -77,17 +66,9 @@ function compositeFetch(
         : input instanceof URL
           ? input
           : new URL((input as Request).url);
-    if (url.hostname === "graph.facebook.com" && url.pathname.endsWith("/ig_hashtag_search")) {
-      if (opts.hashtagSearch) return Promise.resolve(opts.hashtagSearch);
-      return Promise.resolve(jsonResponse(HASHTAG_SEARCH_FIXTURE));
-    }
-    if (url.hostname === "graph.facebook.com" && url.pathname.endsWith("/top_media")) {
-      if (opts.topMedia) return Promise.resolve(opts.topMedia);
-      return Promise.resolve(jsonResponse(TOP_MEDIA_FIXTURE));
-    }
-    if (url.hostname === "graph.facebook.com" && url.pathname.endsWith("/recent_media")) {
-      if (opts.recentMedia) return Promise.resolve(opts.recentMedia);
-      return Promise.resolve(jsonResponse(RECENT_MEDIA_FIXTURE));
+    if (url.hostname === "graph.instagram.com" && (url.pathname === "/me/media" || url.pathname.endsWith("/me/media"))) {
+      if (opts.meMedia) return Promise.resolve(opts.meMedia);
+      return Promise.resolve(jsonResponse(ME_MEDIA_FIXTURE));
     }
     return server.fetch(input, init);
   };
@@ -116,7 +97,14 @@ interface InstagramBody {
   created: number;
   updated: number;
   failed: number;
-  signals: Array<{ keyword: string; hashtag: string; mediaCount: number; totalEngagement: number }>;
+  signals: Array<{
+    keyword: string;
+    hashtag: string;
+    mediaCount: number;
+    topMediaCount?: number;
+    recentMediaCount?: number;
+    totalEngagement: number;
+  }>;
 }
 
 describe("GET /api/market/instagram", () => {
@@ -150,6 +138,8 @@ describe("GET /api/market/instagram", () => {
       keyword: "smart watch",
       hashtag: "smartwatch",
       mediaCount: 6,
+      topMediaCount: 6,
+      recentMediaCount: 6,
       totalEngagement: 5739,
     });
     expect(body.capturedAt).toBeTruthy();
@@ -159,6 +149,45 @@ describe("GET /api/market/instagram", () => {
     expect(source?.kind).toBe("api");
     expect(server.store.instagram_signals).toHaveLength(1);
     expect(server.store.instagram_signals[0].source_id).toBe(source?.id);
+  });
+
+  it("returns a persisted zero signal when no own media matches the query", async () => {
+    server = createMockPostgrest();
+
+    const res = await get(
+      server,
+      "/api/market/instagram?q=unmatched",
+      configuredEnv(),
+      compositeFetch(
+        server,
+        {
+          meMedia: jsonResponse({
+            data: [
+              {
+                id: "media_unrelated",
+                media_type: "IMAGE",
+                caption: "Sunset at the beach #travel",
+                timestamp: "2026-03-03T10:00:00+0000",
+                like_count: 9999,
+                comments_count: 999,
+              },
+            ],
+          }),
+        },
+      ),
+    );
+    const body = (await res.json()) as InstagramBody;
+
+    expect(res.status).toBe(200);
+    expect(body.hashtag).toBe("unmatched");
+    expect(body.signals[0]).toMatchObject({
+      keyword: "unmatched",
+      hashtag: "unmatched",
+      mediaCount: 0,
+      totalEngagement: 0,
+    });
+    expect(server.store.instagram_signals).toHaveLength(1);
+    expect(server.store.instagram_signals[0].media_count).toBe(0);
   });
 
   it("defaults limit to 25", async () => {
@@ -220,7 +249,7 @@ describe("GET /api/market/instagram", () => {
       server,
       "/api/market/instagram?q=phone",
       configuredEnv(),
-      compositeFetch(server, { hashtagSearch: new Response("slow down", { status: 429 }) }),
+      compositeFetch(server, { meMedia: new Response("slow down", { status: 429 }) }),
     );
     const body = (await res.json()) as { code: string };
 
@@ -228,14 +257,14 @@ describe("GET /api/market/instagram", () => {
     expect(body.code).toBe("RATE_LIMITED");
   });
 
-  it("returns 502 with RATE_LIMITED when the 30-hashtag/7-day Graph limit is hit", async () => {
+  it("returns 502 with RATE_LIMITED when Graph rate-limits /me/media", async () => {
     server = createMockPostgrest();
 
     const res = await get(
       server,
       "/api/market/instagram?q=phone",
       configuredEnv(),
-      compositeFetch(server, { hashtagSearch: graphErrorResponse(613) }),
+      compositeFetch(server, { meMedia: graphErrorResponse(613) }),
     );
     const body = (await res.json()) as { code: string };
 
@@ -250,7 +279,7 @@ describe("GET /api/market/instagram", () => {
       server,
       "/api/market/instagram?q=phone",
       configuredEnv(),
-      compositeFetch(server, { hashtagSearch: graphErrorResponse(190) }),
+      compositeFetch(server, { meMedia: graphErrorResponse(190) }),
     );
     const body = (await res.json()) as { code: string };
 
@@ -265,7 +294,7 @@ describe("GET /api/market/instagram", () => {
       server,
       "/api/market/instagram?q=phone",
       configuredEnv(),
-      compositeFetch(server, { hashtagSearch: graphErrorResponse(190) }),
+      compositeFetch(server, { meMedia: graphErrorResponse(190) }),
     );
     const text = await res.text();
     const body = JSON.parse(text) as { error: string; code: string };
@@ -275,7 +304,7 @@ describe("GET /api/market/instagram", () => {
     expect(text).not.toContain(ACCESS_TOKEN);
     expect(body.error).not.toContain(ACCESS_TOKEN);
     expect(body.error).toContain("access_token=REDACTED");
-    expect(body.error).toContain("/v26.0/ig_hashtag_search");
+    expect(body.error).toContain("/me/media");
   });
 
   it("returns 502 INSTAGRAM_NOT_CONFIGURED when the access token is missing", async () => {

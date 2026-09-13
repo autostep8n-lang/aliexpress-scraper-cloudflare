@@ -19,12 +19,14 @@ import { MarketError, type InstagramSignal } from "../market/types";
 import { jsonError, jsonOk } from "../utils/http";
 
 /**
- * GET /api/market/instagram: collect Instagram market intelligence for a
- * keyword and persist the aggregate signal.
+ * GET /api/market/instagram: collect connected-account own-media evidence
+ * for a keyword and persist the aggregate signal. Captions are filtered
+ * locally against the normalized query/hashtag; this is not Instagram-wide
+ * public hashtag intelligence.
  *
  * Query params:
- * - `q` (required)      keyword to derive the hashtag from and search for
- * - `limit` (optional)  max number of media items to aggregate per edge
+ * - `q` (required)      keyword to derive the local hashtag filter from
+ * - `limit` (optional)  max number of ranked media items on the signal
  *                       (1..50); default 25
  *
  * Outcomes map to:

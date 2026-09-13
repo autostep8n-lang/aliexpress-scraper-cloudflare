@@ -58,6 +58,8 @@ export {
 
 export {
   buildInstagramSignal,
+  buildOwnMediaCollection,
+  captionMatchesInstagramQuery,
   normalizeInstagramQuery,
   parseInstagramHashtagSearchResponse,
   parseInstagramMediaResponse,
@@ -66,9 +68,7 @@ export {
 } from "./instagram-engine";
 
 export {
-  buildHashtagSearchUrl,
-  buildRecentMediaUrl,
-  buildTopMediaUrl,
+  buildMeMediaUrl,
   getInstagramProvider,
   instagramModule,
   isInstagramHost,

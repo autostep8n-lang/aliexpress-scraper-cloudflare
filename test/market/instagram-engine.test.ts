@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   buildInstagramSignal,
+  buildOwnMediaCollection,
+  captionMatchesInstagramQuery,
   normalizeInstagramQuery,
   parseInstagramHashtagSearchResponse,
   parseInstagramMediaResponse,
@@ -22,6 +24,10 @@ const TOP_MEDIA_FIXTURE = JSON.parse(
 
 const RECENT_MEDIA_FIXTURE = JSON.parse(
   readFileSync(join(__dirname, "..", "fixtures", "instagram-recent-media.json"), "utf8"),
+) as Record<string, unknown>;
+
+const ME_MEDIA_FIXTURE = JSON.parse(
+  readFileSync(join(__dirname, "..", "fixtures", "instagram-me-media.json"), "utf8"),
 ) as Record<string, unknown>;
 
 const CAPTURED_AT = "2026-03-01T00:00:00.000Z";
@@ -233,6 +239,92 @@ describe("parseInstagramMediaResponse", () => {
   });
 });
 
+describe("captionMatchesInstagramQuery", () => {
+  const query = normalizeInstagramQuery({ keyword: "smart watch" });
+
+  it("matches a #hashtag token and the keyword as a substring", () => {
+    expect(captionMatchesInstagramQuery("Best #smartwatch under $50", query)).toBe(true);
+    expect(captionMatchesInstagramQuery("Looking at a smart watch today", query)).toBe(true);
+  });
+
+  it("does not match a longer hashtag or empty captions", () => {
+    expect(captionMatchesInstagramQuery("Try #smartwatches instead", query)).toBe(false);
+    expect(captionMatchesInstagramQuery(null, query)).toBe(false);
+    expect(captionMatchesInstagramQuery("", query)).toBe(false);
+    expect(captionMatchesInstagramQuery("Sunset at the beach #travel", query)).toBe(false);
+  });
+});
+
+describe("buildOwnMediaCollection", () => {
+  const query = normalizeInstagramQuery({ keyword: "smart watch" });
+
+  it("filters own media by caption, ranks recent by timestamp and top by engagement", () => {
+    const media = parseInstagramMediaResponse(ME_MEDIA_FIXTURE);
+    const collection = buildOwnMediaCollection(media, query);
+
+    expect(collection.hashtagId).toBe("smartwatch");
+    expect(collection.hashtagName).toBe("smartwatch");
+    expect(collection.hashtagId).not.toMatch(/^\d+$/);
+    expect(collection.recentMedia.map((item) => item.id)).toEqual([
+      "media_rec1",
+      "media_rec2",
+      "media_top3",
+      "media_top1",
+      "media_top2",
+      "media_top4",
+    ]);
+    expect(collection.topMedia.map((item) => item.id)).toEqual([
+      "media_top3",
+      "media_top1",
+      "media_top2",
+      "media_rec1",
+      "media_top4",
+      "media_rec2",
+    ]);
+    expect(collection.recentMedia).toHaveLength(6);
+    expect(collection.topMedia).toHaveLength(6);
+  });
+
+  it("returns the empty collection when no own media captions match", () => {
+    const media = parseInstagramMediaResponse({
+      data: [
+        {
+          id: "media_unrelated",
+          media_type: "IMAGE",
+          caption: "Sunset at the beach #travel",
+          timestamp: "2026-03-03T10:00:00+0000",
+          like_count: 9999,
+          comments_count: 999,
+        },
+      ],
+    });
+    const collection = buildOwnMediaCollection(media, query);
+
+    expect(collection).toEqual({
+      hashtagId: "smartwatch",
+      hashtagName: "smartwatch",
+      topMedia: [],
+      recentMedia: [],
+    });
+  });
+
+  it("builds a zero signal from a no-match own-media collection", () => {
+    const collection = buildOwnMediaCollection([], query);
+    const signal = buildInstagramSignal(collection, query, CAPTURED_AT);
+
+    expect(signal.mediaCount).toBe(0);
+    expect(signal.topMediaCount).toBe(0);
+    expect(signal.recentMediaCount).toBe(0);
+    expect(signal.totalLikes).toBe(0);
+    expect(signal.totalComments).toBe(0);
+    expect(signal.totalEngagement).toBe(0);
+    expect(signal.avgLikes).toBeNull();
+    expect(signal.avgEngagement).toBeNull();
+    expect(signal.topMedia).toEqual([]);
+    expect(signal.hashtag).toBe("smartwatch");
+  });
+});
+
 describe("buildInstagramSignal", () => {
   it("assembles a deterministic aggregate signal from the fixtures", () => {
     const signal = signalFrom();
@@ -277,10 +369,10 @@ describe("buildInstagramSignal", () => {
     expect(signal.totalEngagement).toBe(5739);
   });
 
-  it("returns a zero-signal for an unresolvable hashtag", () => {
+  it("returns a zero-signal when no own media matches", () => {
     const query = normalizeInstagramQuery({ keyword: "nope" });
     const signal = buildInstagramSignal(
-      { hashtagId: "", hashtagName: "", topMedia: [], recentMedia: [] },
+      { hashtagId: query.hashtag, hashtagName: query.hashtag, topMedia: [], recentMedia: [] },
       query,
       CAPTURED_AT,
     );
@@ -325,7 +417,7 @@ describe("toInstagramObservationRow", () => {
   it("keeps source_id null and the top media columns null when there is no media", () => {
     const query = normalizeInstagramQuery({ keyword: "nope" });
     const signal = buildInstagramSignal(
-      { hashtagId: "", hashtagName: "", topMedia: [], recentMedia: [] },
+      { hashtagId: query.hashtag, hashtagName: query.hashtag, topMedia: [], recentMedia: [] },
       query,
       CAPTURED_AT,
     );

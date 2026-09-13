@@ -485,7 +485,8 @@ export interface InstagramQuery {
 /**
  * Validated and normalized Instagram query. `hashtag` is derived from the
  * keyword (lowercased, `#`-stripped, non-hashtag characters removed) and is
- * what the hashtag_search edge is queried with.
+ * used only as a local caption filter against connected-account own media.
+ * It is not a Graph hashtag id and is never sent to ig_hashtag_search.
  */
 export interface NormalizedInstagramQuery {
   keyword: string;
@@ -494,8 +495,8 @@ export interface NormalizedInstagramQuery {
 }
 
 /**
- * One media item as reported by the IG Hashtag `top_media`/`recent_media`
- * edges (evidence for a signal). `media_url` is null when the media is a
+ * One media item as reported by connected-account `GET /me/media`
+ * (own-media evidence for a signal). `media_url` is null when the media is a
  * video with copyrighted/licensed audio or a reel with downloads disabled.
  * `permalink` is null when the Graph API omits it.
  */
@@ -511,13 +512,21 @@ export interface InstagramMedia {
   engagement: number;
 }
 
-/** The IG hashtag a `hashtag_search` call resolves. */
+/**
+ * Local hashtag identity for a query. `id` is NOT a Graph hashtag node id
+ * (ig_hashtag_search is not used); it is the normalized hashtag string.
+ */
 export interface InstagramHashtag {
   id: string;
   name: string;
 }
 
-/** Parsed IG Hashtag media: the resolved hashtag plus both media edges. */
+/**
+ * Parsed connected-account own media matching a local query.
+ * `hashtagId` is the normalized hashtag string, never a Graph hashtag id.
+ * `recentMedia` is matching own media by recency; `topMedia` is the same
+ * matching set ranked by engagement.
+ */
 export interface InstagramMediaCollection {
   hashtagId: string;
   hashtagName: string;
@@ -526,11 +535,12 @@ export interface InstagramMediaCollection {
 }
 
 /**
- * One Instagram signal: a keyword-level snapshot aggregated from the media
- * returned by the hashtag `top_media` and `recent_media` edges. `mediaCount`
- * is the number of unique media items, `totalLikes`/`totalComments`/
- * `totalEngagement` sum their engagement, and `topMedia` is the most engaging
- * media ranked deterministically.
+ * One Instagram signal: a keyword-level snapshot aggregated from
+ * connected-account own media whose captions match the local query.
+ * This is own-media evidence, not Instagram-wide public hashtag intelligence.
+ * `mediaCount` is the number of unique matching media items,
+ * `totalLikes`/`totalComments`/`totalEngagement` sum their engagement, and
+ * `topMedia` is the most engaging matching media ranked deterministically.
  */
 export interface InstagramSignal {
   keyword: string;

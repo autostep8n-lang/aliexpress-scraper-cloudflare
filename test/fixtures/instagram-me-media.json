@@ -1,0 +1,74 @@
+{
+  "data": [
+    {
+      "id": "media_rec1",
+      "media_type": "REEL",
+      "caption": "Unboxing a new smart watch haul #smartwatch",
+      "timestamp": "2026-03-02T11:20:00+0000",
+      "permalink": "https://www.instagram.com/p/media_rec1/",
+      "like_count": 700,
+      "comments_count": 60,
+      "media_url": "https://scontent.cdninstagram.com/media_rec1.mp4"
+    },
+    {
+      "id": "media_rec2",
+      "media_type": "IMAGE",
+      "caption": "Daily smart watch setup #smartwatch",
+      "timestamp": "2026-03-01T16:05:00+0000",
+      "permalink": "https://www.instagram.com/p/media_rec2/",
+      "like_count": 250,
+      "comments_count": 8,
+      "media_url": "https://scontent.cdninstagram.com/media_rec2.jpg"
+    },
+    {
+      "id": "media_top3",
+      "media_type": "REEL",
+      "caption": "This budget smart watch reels reel is getting attention #smartwatch",
+      "timestamp": "2026-02-20T08:30:00+0000",
+      "permalink": "https://www.instagram.com/p/media_top3/",
+      "like_count": 1800,
+      "comments_count": 220,
+      "media_url": null
+    },
+    {
+      "id": "media_top1",
+      "media_type": "IMAGE",
+      "caption": "Best budget smart watch under $50? #smartwatch",
+      "timestamp": "2026-02-18T09:00:00+0000",
+      "permalink": "https://www.instagram.com/p/media_top1/",
+      "like_count": 1200,
+      "comments_count": 98,
+      "media_url": "https://scontent.cdninstagram.com/media_top1.jpg"
+    },
+    {
+      "id": "media_top2",
+      "media_type": "VIDEO",
+      "caption": "Apple Watch vs Garmin for running #smartwatch",
+      "timestamp": "2026-02-15T12:00:00+0000",
+      "permalink": "https://www.instagram.com/p/media_top2/",
+      "like_count": 950,
+      "comments_count": 41,
+      "media_url": "https://scontent.cdninstagram.com/media_top2.mp4"
+    },
+    {
+      "id": "media_top4",
+      "media_type": "CAROUSEL_ALBUM",
+      "caption": "Smart watch battery life tips #smartwatch",
+      "timestamp": "2026-02-10T07:45:00+0000",
+      "permalink": "https://www.instagram.com/p/media_top4/",
+      "like_count": 400,
+      "comments_count": 12,
+      "media_url": "https://scontent.cdninstagram.com/media_top4.jpg"
+    },
+    {
+      "id": "media_unrelated",
+      "media_type": "IMAGE",
+      "caption": "Sunset at the beach #travel",
+      "timestamp": "2026-03-03T10:00:00+0000",
+      "permalink": "https://www.instagram.com/p/media_unrelated/",
+      "like_count": 9999,
+      "comments_count": 999,
+      "media_url": "https://scontent.cdninstagram.com/media_unrelated.jpg"
+    }
+  ]
+}
