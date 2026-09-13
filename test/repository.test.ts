@@ -745,6 +745,10 @@ describe("listScoresForProducts / listCountryOpportunityScoresForProducts", () =
   });
 });
 
+const PRODUCT_ID = "11111111-1111-4111-8111-111111111111";
+const OTHER_ID = "22222222-2222-4222-8222-222222222222";
+const MISSING_ID = "33333333-3333-4333-8333-333333333333";
+
 describe("getProductById (P6.28 read-only)", () => {
   let server: MockPostgrest;
 
@@ -761,7 +765,7 @@ describe("getProductById (P6.28 read-only)", () => {
   it("returns credentials_missing without touching the network", async () => {
     const fetchMock = vi.fn(server.fetch);
     vi.stubGlobal("fetch", fetchMock);
-    const result = await getProductById({} as Env, "p-1");
+    const result = await getProductById({} as Env, PRODUCT_ID);
     expect(result.status).toBe("credentials_missing");
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -769,35 +773,44 @@ describe("getProductById (P6.28 read-only)", () => {
   it("returns the matching product without writing", async () => {
     server.seed("products", [
       {
-        id: "p-1",
+        id: PRODUCT_ID,
         title: "Wireless Earbuds",
         brand: "SoundCore",
         last_seen_at: "2026-08-18T10:00:00.000Z",
         lifecycle_status: "active",
       },
       {
-        id: "p-2",
+        id: OTHER_ID,
         title: "Other",
         last_seen_at: "2026-08-18T09:00:00.000Z",
       },
     ]);
-    const result = await getProductById(configuredEnv(), "p-1");
+    const result = await getProductById(configuredEnv(), PRODUCT_ID);
     expect(result.status).toBe("found");
     if (result.status !== "found") return;
-    expect(result.data.id).toBe("p-1");
+    expect(result.data.id).toBe(PRODUCT_ID);
     expect(result.data.title).toBe("Wireless Earbuds");
     expect(server.requests.every((request) => request.method === "GET")).toBe(true);
   });
 
-  it("returns not_found for an unknown id", async () => {
-    server.seed("products", [{ id: "p-1", title: "Wireless Earbuds" }]);
-    const result = await getProductById(configuredEnv(), "missing");
+  it("returns not_found for an unknown uuid without treating it as a lookup error", async () => {
+    server.seed("products", [{ id: PRODUCT_ID, title: "Wireless Earbuds" }]);
+    const result = await getProductById(configuredEnv(), MISSING_ID);
     expect(result.status).toBe("not_found");
+    expect(server.requests.some((request) => request.url.includes(`id=eq.${MISSING_ID}`))).toBe(true);
+  });
+
+  it("returns not_found for a malformed id without querying products", async () => {
+    const fetchMock = vi.fn(server.fetch);
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await getProductById(configuredEnv(), "invalid-test-id");
+    expect(result.status).toBe("not_found");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("returns a typed error when the lookup fails", async () => {
     server.override("GET", "/rest/v1/products", 500, { message: "db down" });
-    const result = await getProductById(configuredEnv(), "p-1");
+    const result = await getProductById(configuredEnv(), PRODUCT_ID);
     expect(result.status).toBe("error");
     if (result.status !== "error") return;
     expect(result.code).toBe("product_lookup_failed");

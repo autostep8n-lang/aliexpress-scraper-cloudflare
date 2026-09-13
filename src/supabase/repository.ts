@@ -390,10 +390,17 @@ export async function listProducts(
   }
 }
 
+const PRODUCT_ID_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Read-only product lookup by primary key (P6.28). Never writes.
  */
 export async function getProductById(env: Env, productId: string): Promise<RepositoryResult<PersistedProductRecord>> {
+  if (!PRODUCT_ID_UUID.test(productId)) {
+    return { status: "not_found" };
+  }
+
   const client = getSupabaseClient(env);
   if (!client) {
     return { status: "credentials_missing" };

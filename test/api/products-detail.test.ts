@@ -5,6 +5,9 @@ import { createMockPostgrest, type MockPostgrest } from "../helpers/postgrest-mo
 
 const SUPABASE_URL = "https://example.supabase.co";
 const SECRET_KEY = "test-secret-key";
+const PRODUCT_ID = "11111111-1111-4111-8111-111111111111";
+const MISSING_ID = "22222222-2222-4222-8222-222222222222";
+const XSS_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ctx = {} as ExecutionContext;
 
 function configuredEnv(): Env {
@@ -19,7 +22,7 @@ async function head(path: string, env: Env = configuredEnv()): Promise<Response>
   return routeRequest(new Request(`https://worker.example${path}`, { method: "HEAD" }), env, ctx);
 }
 
-function seedDetail(server: MockPostgrest, id = "p-1"): void {
+function seedDetail(server: MockPostgrest, id = PRODUCT_ID): void {
   server.seed("products", [
     {
       id,
@@ -110,7 +113,7 @@ describe("GET /api/products/:id", () => {
 
   it("returns 200 with full analyst evidence for an existing product", async () => {
     seedDetail(server);
-    const res = await get("/api/products/p-1");
+    const res = await get(`/api/products/${PRODUCT_ID}`);
     const body = (await res.json()) as {
       status: string;
       product: { id: string; title: string };
@@ -126,7 +129,7 @@ describe("GET /api/products/:id", () => {
 
     expect(res.status).toBe(200);
     expect(body.status).toBe("ok");
-    expect(body.product.id).toBe("p-1");
+    expect(body.product.id).toBe(PRODUCT_ID);
     expect(body.product.title).toBe("Wireless Earbuds");
     expect(body.decision.provider).toBe("template");
     expect(body.decision.score.scoreType).toBe("decision_opportunity");
@@ -143,14 +146,23 @@ describe("GET /api/products/:id", () => {
 
   it("returns 404 for an unknown product", async () => {
     seedDetail(server);
-    const res = await get("/api/products/missing");
+    const res = await get(`/api/products/${MISSING_ID}`);
     const body = (await res.json()) as { code: string };
     expect(res.status).toBe(404);
     expect(body.code).toBe("NOT_FOUND");
   });
 
+  it("returns 404 for a malformed id without querying products", async () => {
+    seedDetail(server);
+    const res = await get("/api/products/invalid-test-id");
+    const body = (await res.json()) as { code: string };
+    expect(res.status).toBe(404);
+    expect(body.code).toBe("NOT_FOUND");
+    expect(server.requests.some((request) => request.url.includes("/rest/v1/products"))).toBe(false);
+  });
+
   it("returns 404 for nested or empty ids instead of treating them as products", async () => {
-    const nested = await get("/api/products/p-1/extra");
+    const nested = await get(`/api/products/${PRODUCT_ID}/extra`);
     expect(nested.status).toBe(501);
     const empty = await get("/api/products/");
     expect(empty.status).toBe(501);
@@ -159,7 +171,7 @@ describe("GET /api/products/:id", () => {
   it("returns 503 when Supabase is not configured", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const res = await get("/api/products/p-1", {} as Env);
+    const res = await get(`/api/products/${PRODUCT_ID}`, {} as Env);
     const body = (await res.json()) as { code: string };
     expect(res.status).toBe(503);
     expect(body.code).toBe("SUPABASE_NOT_CONFIGURED");
@@ -168,7 +180,7 @@ describe("GET /api/products/:id", () => {
 
   it("returns 502 when the product lookup fails", async () => {
     server.override("GET", "/rest/v1/products", 500, { message: "db down" });
-    const res = await get("/api/products/p-1");
+    const res = await get(`/api/products/${PRODUCT_ID}`);
     const body = (await res.json()) as { code: string };
     expect(res.status).toBe(502);
     expect(body.code).toBe("product_lookup_failed");
@@ -176,7 +188,7 @@ describe("GET /api/products/:id", () => {
 
   it("rejects non-GET methods", async () => {
     const res = await routeRequest(
-      new Request("https://worker.example/api/products/p-1", { method: "POST" }),
+      new Request(`https://worker.example/api/products/${PRODUCT_ID}`, { method: "POST" }),
       configuredEnv(),
       ctx,
     );
@@ -185,14 +197,14 @@ describe("GET /api/products/:id", () => {
 
   it("supports HEAD without writing", async () => {
     seedDetail(server);
-    const res = await head("/api/products/p-1");
+    const res = await head(`/api/products/${PRODUCT_ID}`);
     expect(res.status).toBe(200);
     expect(server.requests.every((request) => request.method === "GET")).toBe(true);
   });
 
   it("never leaks credentials", async () => {
     seedDetail(server);
-    const res = await get("/api/products/p-1");
+    const res = await get(`/api/products/${PRODUCT_ID}`);
     const text = await res.text();
     expect(text).not.toContain(SECRET_KEY);
     for (const request of server.requests) {
@@ -207,7 +219,7 @@ describe("GET /api/products/:id", () => {
       products: Array<{ id: string; decision: Record<string, unknown> }>;
     };
     expect(res.status).toBe(200);
-    expect(body.products[0].id).toBe("p-1");
+    expect(body.products[0].id).toBe(PRODUCT_ID);
     expect(body.products[0].decision).not.toHaveProperty("evidence");
     expect(Object.keys(body.products[0].decision).sort()).toEqual([
       "caveats",
@@ -234,7 +246,7 @@ describe("GET /products/:id HTML", () => {
 
   it("renders score, summary, evidence and why content", async () => {
     seedDetail(server);
-    const res = await get("/products/p-1");
+    const res = await get(`/products/${PRODUCT_ID}`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
     const html = await res.text();
@@ -252,7 +264,7 @@ describe("GET /products/:id HTML", () => {
   });
 
   it("returns 404 HTML for a missing product", async () => {
-    const res = await get("/products/missing");
+    const res = await get(`/products/${MISSING_ID}`);
     expect(res.status).toBe(404);
     expect(await res.text()).toContain("Product not found.");
   });
@@ -260,7 +272,7 @@ describe("GET /products/:id HTML", () => {
   it("renders the unconfigured state without touching the network", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const res = await get("/products/p-1", {} as Env);
+    const res = await get(`/products/${PRODUCT_ID}`, {} as Env);
     const html = await res.text();
     expect(res.status).toBe(200);
     expect(html).toContain("Supabase is not configured");
@@ -270,14 +282,14 @@ describe("GET /products/:id HTML", () => {
   it("escapes user/product text in HTML", async () => {
     server.seed("products", [
       {
-        id: "p-xss",
+        id: XSS_ID,
         title: `<script>alert(1)</script>`,
         brand: `"><img src=x onerror=alert(2)>`,
         last_seen_at: "2026-08-18T10:00:00.000Z",
         lifecycle_status: "active",
       },
     ]);
-    const html = await (await get("/products/p-xss")).text();
+    const html = await (await get(`/products/${XSS_ID}`)).text();
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(html).toContain("&quot;&gt;&lt;img src=x onerror=alert(2)&gt;");
@@ -301,8 +313,8 @@ describe("list pages link to product detail", () => {
     seedDetail(server);
     const discovery = await (await get("/")).text();
     const opportunities = await (await get("/opportunities")).text();
-    expect(discovery).toContain('href="/products/p-1"');
-    expect(opportunities).toContain('href="/products/p-1"');
+    expect(discovery).toContain(`href="/products/${PRODUCT_ID}"`);
+    expect(opportunities).toContain(`href="/products/${PRODUCT_ID}"`);
     expect(discovery).not.toContain("Why this opportunity");
     expect(opportunities).not.toContain("Why this opportunity");
   });
