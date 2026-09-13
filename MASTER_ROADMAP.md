@@ -54,7 +54,15 @@
   - Trends API (`/trends/keywords/{region}/top/{trend_type}`) returns top trending keywords, not arbitrary keyword lookup.
   - Ads keyword metrics (`/ad_accounts/{ad_account_id}/keywords/metrics`) are advertising intelligence, not organic market signals.
   - No implementation, registry change, migration, or secrets added.
-- **Next task: P4 — Country Intelligence Engine**
+- **P4.22 — Country Intelligence Engine: DONE**
+  - Pure engine `analyzeCountryIntelligence` under `src/country/`; country-scoped demand evidence from existing Google Trends observations (keyword + ISO alpha-2).
+  - V1 countries: SA / US / GB / DE / FR / ES / IT. GB is the ISO alpha-2 code for the UK. EU is not a country key.
+  - Current production ingest is SA MVP.
+- **P4.23 — Country Opportunity Scoring: DONE**
+  - Deterministic product × country scoring under `src/country/`; persistence in `country_opportunity_scores`.
+  - Missing optional signals remain excluded from the weighted mean per the existing engine; absence of country evidence forces tier `unknown`.
+  - Current production ingest is SA MVP.
+- **Next task: P5.24 — Opportunity Score**
 
 ## P0 — Foundation
 
@@ -101,8 +109,8 @@
 
 | # | Feature | Status | Notes |
 |---|---|---|---|
-| 22 | Country Intelligence Engine | TODO | Target markets include SA / US / UK / EU and others |
-| 23 | Country Opportunity Scoring | TODO | Product × Country |
+| 22 | Country Intelligence Engine | DONE | `analyzeCountryIntelligence`; Google Trends evidence; v1 SA / US / GB / DE / FR / ES / IT (GB = UK; EU is not a country key); production ingest SA MVP |
+| 23 | Country Opportunity Scoring | DONE | Product × country score + `country_opportunity_scores`; missing optional signals excluded per existing engine; production ingest SA MVP |
 
 ## P5 — Decision Engine
 
