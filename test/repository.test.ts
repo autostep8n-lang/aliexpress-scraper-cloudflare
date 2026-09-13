@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import {
   getObservation,
+  getProductById,
   listCountryOpportunityScoresForProducts,
   listProducts,
   listScoresForProducts,
@@ -741,5 +742,64 @@ describe("listScoresForProducts / listCountryOpportunityScoresForProducts", () =
     expect(scores.data[0].score_type).toBe("market_opportunity");
     expect(countries.data[0].country).toBe("SA");
     expect(server.requests.every((request) => request.method === "GET")).toBe(true);
+  });
+});
+
+describe("getProductById (P6.28 read-only)", () => {
+  let server: MockPostgrest;
+
+  beforeEach(() => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", server.fetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("returns credentials_missing without touching the network", async () => {
+    const fetchMock = vi.fn(server.fetch);
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await getProductById({} as Env, "p-1");
+    expect(result.status).toBe("credentials_missing");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns the matching product without writing", async () => {
+    server.seed("products", [
+      {
+        id: "p-1",
+        title: "Wireless Earbuds",
+        brand: "SoundCore",
+        last_seen_at: "2026-08-18T10:00:00.000Z",
+        lifecycle_status: "active",
+      },
+      {
+        id: "p-2",
+        title: "Other",
+        last_seen_at: "2026-08-18T09:00:00.000Z",
+      },
+    ]);
+    const result = await getProductById(configuredEnv(), "p-1");
+    expect(result.status).toBe("found");
+    if (result.status !== "found") return;
+    expect(result.data.id).toBe("p-1");
+    expect(result.data.title).toBe("Wireless Earbuds");
+    expect(server.requests.every((request) => request.method === "GET")).toBe(true);
+  });
+
+  it("returns not_found for an unknown id", async () => {
+    server.seed("products", [{ id: "p-1", title: "Wireless Earbuds" }]);
+    const result = await getProductById(configuredEnv(), "missing");
+    expect(result.status).toBe("not_found");
+  });
+
+  it("returns a typed error when the lookup fails", async () => {
+    server.override("GET", "/rest/v1/products", 500, { message: "db down" });
+    const result = await getProductById(configuredEnv(), "p-1");
+    expect(result.status).toBe("error");
+    if (result.status !== "error") return;
+    expect(result.code).toBe("product_lookup_failed");
   });
 });

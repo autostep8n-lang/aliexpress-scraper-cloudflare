@@ -1,8 +1,15 @@
+import type { AnalystEvidence, AnalystResult, AnalystSignalEvidence } from "../analyst";
 import type { Env } from "../env";
-import { loadDiscoveryPage, loadOpportunitiesPage, parseProductListQuery } from "./assemble";
-import { DEFAULT_PRODUCT_LIST_LIMIT, type DiscoveryPage, type DiscoveryProduct, type ProductListQuery } from "./types";
+import { loadDiscoveryPage, loadOpportunitiesPage, loadProductDetail, parseProductId, parseProductListQuery } from "./assemble";
+import {
+  DEFAULT_PRODUCT_LIST_LIMIT,
+  type DiscoveryPage,
+  type DiscoveryProduct,
+  type ProductDetail,
+  type ProductListQuery,
+} from "./types";
 
-type DashboardKind = "discovery" | "opportunities";
+type DashboardKind = "discovery" | "opportunities" | "detail";
 
 const DASHBOARD_COPY: Record<
   DashboardKind,
@@ -19,6 +26,12 @@ const DASHBOARD_COPY: Record<
     empty: "No ranked opportunities.",
     error: "Unable to load opportunities.",
     apiPath: "/api/opportunities",
+  },
+  detail: {
+    title: "Product Analysis",
+    empty: "Product not found.",
+    error: "Unable to load product.",
+    apiPath: "/api/products",
   },
 };
 
@@ -42,6 +55,30 @@ export async function handleOpportunitiesDashboard(url: URL, env: Env): Promise<
   return handleDashboardKind(url, env, "opportunities");
 }
 
+/**
+ * Product Detail / Analysis (P6.28).
+ *
+ * Server-rendered HTML for one product with the full on-read P5.24 / P5.25
+ * analyst result, including evidence. Read-only.
+ */
+export async function handleProductDetailDashboard(url: URL, env: Env, productId: string): Promise<Response> {
+  const parsedId = parseProductId(productId);
+  if (!parsedId) {
+    return htmlResponse(renderNotFoundPage(url), 404);
+  }
+  const result = await loadProductDetail(env, parsedId);
+  if (result.status === "credentials_missing") {
+    return htmlResponse(renderUnconfiguredPage("detail", url));
+  }
+  if (result.status === "not_found") {
+    return htmlResponse(renderNotFoundPage(url), 404);
+  }
+  if (result.status === "error") {
+    return htmlResponse(renderErrorPage("detail", result.message, result.code ?? "PRODUCT_LOOKUP_FAILED", url));
+  }
+  return htmlResponse(renderDetailPage(result.data, url));
+}
+
 async function handleDashboardKind(url: URL, env: Env, kind: DashboardKind): Promise<Response> {
   const parsed = parseProductListQuery(url.searchParams);
   if (!parsed.ok) {
@@ -57,8 +94,9 @@ async function handleDashboardKind(url: URL, env: Env, kind: DashboardKind): Pro
   return htmlResponse(renderListPage(kind, result.data, parsed.query, url));
 }
 
-function htmlResponse(html: string): Response {
+function htmlResponse(html: string, status = 200): Response {
   return new Response(html, {
+    status,
     headers: { "content-type": "text/html; charset=utf-8" },
   });
 }
@@ -84,7 +122,7 @@ function renderProduct(product: DiscoveryProduct): string {
   return `<li class="product">
       ${image}
       <div>
-        <h2>${escapeHtml(product.title)}</h2>
+         <h2><a href="/products/${encodeURIComponent(product.id)}">${escapeHtml(product.title)}</a></h2>
         <p class="meta">${escapeHtml(product.brand ?? "Unknown brand")} · ${escapeHtml(product.lifecycleStatus)} · ${escapeHtml(product.availabilityStatus)}</p>
         <p class="score">Score ${product.decision.score.value} (${escapeHtml(product.decision.score.tier)})${country}</p>
         <p class="summary">${escapeHtml(product.decision.summary)}</p>
@@ -134,6 +172,92 @@ function pagerHref(url: URL, query: ProductListQuery, offset: number): string {
   return search ? `${url.pathname}?${search}` : url.pathname;
 }
 
+function renderDetailPage(detail: ProductDetail, url: URL): string {
+  const product = detail.product;
+  const decision = detail.decision;
+  const image = product.primaryImageUrl
+    ? `<img src="${escapeHtml(product.primaryImageUrl)}" alt="" width="120" height="120" />`
+    : `<div class="placeholder large" aria-hidden="true"></div>`;
+  const country = decision.selectedCountry ? ` · ${escapeHtml(decision.selectedCountry)}` : "";
+  const source = product.canonicalUrl
+    ? `<p class="meta"><a href="${escapeHtml(product.canonicalUrl)}">Source listing</a></p>`
+    : "";
+  const caveats =
+    decision.caveats.length > 0
+      ? `<p class="caveats">${escapeHtml(decision.caveats.join("; "))}</p>`
+      : "";
+  return layout(
+    "detail",
+    `<article class="detail">
+      <div class="hero">
+        ${image}
+        <div>
+          <h1>${escapeHtml(product.title)}</h1>
+          <p class="meta">${escapeHtml(product.brand ?? "Unknown brand")} · ${escapeHtml(product.lifecycleStatus)} · ${escapeHtml(product.availabilityStatus)}</p>
+          ${source}
+          <p class="score">Score ${decision.score.value} (${escapeHtml(decision.score.tier)})${country}</p>
+          <p class="summary">${escapeHtml(decision.summary)}</p>
+          ${caveats}
+        </div>
+      </div>
+      ${renderEvidence(decision)}
+      <p class="pager"><a href="/">Product Discovery</a> · <a href="/opportunities">Top Opportunities</a></p>
+    </article>`,
+    url,
+    product.title,
+  );
+}
+
+function renderEvidence(decision: AnalystResult): string {
+  const evidence = decision.evidence;
+  return `<section class="evidence">
+      <h2>Why this opportunity</h2>
+      <p class="meta">Provider ${escapeHtml(decision.provider)} · decision weight ${evidence.totalWeight}</p>
+      ${renderSignalList("Decision signals", evidence.decisionSignals)}
+      ${renderMarketEvidence(evidence)}
+      ${renderCountryEvidence(evidence)}
+    </section>`;
+}
+
+function renderMarketEvidence(evidence: AnalystEvidence): string {
+  if (!evidence.market.present) {
+    return `<h3>Product market opportunity</h3><p class="empty">No product market opportunity evidence.</p>`;
+  }
+  return `<h3>Product market opportunity ${evidence.market.value} (${escapeHtml(String(evidence.market.tier))})</h3>
+      ${renderSignalList("Market signals", evidence.market.signals)}`;
+}
+
+function renderCountryEvidence(evidence: AnalystEvidence): string {
+  if (!evidence.country.present || evidence.country.country === null) {
+    return `<h3>Selected country</h3><p class="empty">No country opportunity evidence.</p>`;
+  }
+  const country = evidence.country;
+  return `<h3>Selected country ${escapeHtml(country.country)} scored ${country.value} (${escapeHtml(String(country.tier))})</h3>
+      <ul class="signals">
+        <li>Latest search interest: ${country.latestValue ?? "n/a"}</li>
+        <li>Change: ${country.change ?? "n/a"}</li>
+        <li>Direction: ${escapeHtml(country.direction ?? "unknown")}</li>
+      </ul>`;
+}
+
+function renderSignalList(title: string, signals: AnalystSignalEvidence[]): string {
+  if (signals.length === 0) {
+    return `<h3>${escapeHtml(title)}</h3><p class="empty">No signals.</p>`;
+  }
+  const items = signals
+    .map((signal) => {
+      const detail = signal.detail ? ` — ${escapeHtml(signal.detail)}` : "";
+      const presence = signal.present ? "present" : "missing";
+      return `<li>${escapeHtml(signal.label)} (${presence}): ${signal.value}${detail}</li>`;
+    })
+    .join("");
+  return `<h3>${escapeHtml(title)}</h3><ul class="signals">${items}</ul>`;
+}
+
+function renderNotFoundPage(url: URL): string {
+  return layout("detail", `<p class="empty">Product not found.</p>`, url);
+}
+
 function renderUnconfiguredPage(kind: DashboardKind, url: URL): string {
   return layout(
     kind,
@@ -150,26 +274,34 @@ function renderErrorPage(kind: DashboardKind, message: string, code: string, url
   );
 }
 
-function layout(kind: DashboardKind, body: string, url: URL): string {
+function layout(kind: DashboardKind, body: string, url: URL, heading?: string): string {
   const copy = DASHBOARD_COPY[kind];
   const baseUrl = `${url.protocol}//${url.host}`;
+  const title = heading ?? copy.title;
+  const headingHtml = kind === "detail" && heading ? "" : `<h1>${escapeHtml(copy.title)}</h1>`;
+  const apiPath = kind === "detail" && heading ? `${copy.apiPath}/${encodeURIComponent(url.pathname.split("/").pop() ?? "")}` : copy.apiPath;
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${escapeHtml(copy.title)}</title>
+    <title>${escapeHtml(title)}</title>
     <style>
       body { font-family: system-ui, sans-serif; margin: 0; padding: 2rem; background: #0b1220; color: #e6edf3; }
       main { max-width: 52rem; margin: 0 auto; }
       h1 { font-size: 1.5rem; }
       h2 { font-size: 1.05rem; margin: 0 0 0.25rem; }
+      h3 { font-size: 0.95rem; margin: 1rem 0 0.35rem; }
       a { color: #58a6ff; }
       .filters { display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 1rem 0 1.5rem; align-items: end; }
       .filters input, .filters select, .filters button { background: #1c2333; color: #e6edf3; border: 1px solid #30363d; border-radius: 4px; padding: 0.4rem 0.6rem; }
       .products { list-style: none; padding: 0; margin: 0; display: grid; gap: 1rem; }
       .product { display: grid; grid-template-columns: 72px 1fr; gap: 1rem; background: #161b26; padding: 1rem; border-radius: 8px; }
       .product img, .placeholder { width: 72px; height: 72px; object-fit: cover; border-radius: 6px; background: #1c2333; }
+      .placeholder.large, .hero img { width: 120px; height: 120px; }
+      .hero { display: grid; grid-template-columns: 120px 1fr; gap: 1rem; background: #161b26; padding: 1rem; border-radius: 8px; }
+      .evidence { margin-top: 1.5rem; }
+      .signals { margin: 0; padding-left: 1.2rem; color: #9da7b3; }
       .meta, .score, .summary, .caveats, .pager, .empty, .error { color: #9da7b3; margin: 0.2rem 0; }
       .caveats, .error { color: #f0883e; }
       .pager { display: flex; gap: 1rem; margin-top: 1.5rem; }
@@ -177,9 +309,9 @@ function layout(kind: DashboardKind, body: string, url: URL): string {
   </head>
   <body>
     <main>
-      <h1>${escapeHtml(copy.title)}</h1>
+      ${headingHtml}
       ${body}
-      <p><a href="${baseUrl}/health">/health</a> · <a href="${baseUrl}${copy.apiPath}">${copy.apiPath}</a></p>
+      <p><a href="${baseUrl}/health">/health</a> · <a href="${baseUrl}${apiPath}">${apiPath}</a></p>
     </main>
   </body>
 </html>`;

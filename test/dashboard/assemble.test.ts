@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   assembleDiscoveryProducts,
+  assembleProductDetail,
   compareOpportunityRank,
   isEligibleOpportunity,
   OPPORTUNITY_RANKING_WINDOW,
   paginateRankedOpportunities,
+  parseProductId,
   parseProductListQuery,
   rankOpportunityProducts,
 } from "../../src/dashboard/assemble";
@@ -156,6 +158,47 @@ describe("assembleDiscoveryProducts", () => {
     expect(row).not.toHaveProperty("evidence");
     expect(row.decision).not.toHaveProperty("evidence");
     expect(Object.keys(row.decision).sort()).toEqual(["caveats", "provider", "score", "selectedCountry", "summary"]);
+  });
+});
+
+describe("assembleProductDetail", () => {
+  it("keeps the full P5.25 analyst evidence for a known product", () => {
+    const detail = assembleProductDetail(product(), [marketScore(0.4)], [countryRow("SA", 0.8)]);
+    expect(detail.status).toBe("ok");
+    expect(detail.product.id).toBe(PRODUCT_ID);
+    expect(detail.product.title).toBe("Wireless Earbuds");
+    expect(detail.decision.provider).toBe("template");
+    expect(detail.decision.score.scoreType).toBe("decision_opportunity");
+    expect(detail.decision.score.value).toBe(60);
+    expect(detail.decision.score.tier).toBe("medium");
+    expect(detail.decision.selectedCountry).toBe("SA");
+    expect(detail.decision.summary).toContain("Decision opportunity score 60 (medium)");
+    expect(detail.decision.evidence.market.present).toBe(true);
+    expect(detail.decision.evidence.country.present).toBe(true);
+    expect(detail.decision.evidence.country.country).toBe("SA");
+    expect(detail.decision.evidence.decisionSignals.length).toBeGreaterThan(0);
+    expect(detail.decision.caveats).toEqual([]);
+  });
+
+  it("does not change compact list payloads when both assembly paths run", () => {
+    const scores = [marketScore(0.4)];
+    const countries = [countryRow("SA", 0.8)];
+    const [row] = assembleDiscoveryProducts([product()], scores, countries);
+    const detail = assembleProductDetail(product(), scores, countries);
+    expect(row.decision).not.toHaveProperty("evidence");
+    expect(detail.decision).toHaveProperty("evidence");
+    expect(row.decision.score).toEqual(detail.decision.score);
+    expect(row.decision.summary).toBe(detail.decision.summary);
+  });
+});
+
+describe("parseProductId", () => {
+  it("accepts a trimmed id and rejects empty or nested paths", () => {
+    expect(parseProductId(` ${PRODUCT_ID} `)).toBe(PRODUCT_ID);
+    expect(parseProductId("")).toBeNull();
+    expect(parseProductId("   ")).toBeNull();
+    expect(parseProductId("a/b")).toBeNull();
+    expect(parseProductId("abc?x=1")).toBeNull();
   });
 });
 

@@ -1,3 +1,4 @@
+import type { AnalystResult } from "../analyst";
 import type { V1Country } from "../country/types";
 import type { LifecycleStatus } from "../lifecycle/types";
 import type { OpportunityTier } from "../opportunity/types";
@@ -46,4 +47,21 @@ export interface DiscoveryPage {
     offset: number;
     total: number;
   };
+}
+
+export interface ProductDetailIdentity {
+  id: string;
+  title: string;
+  brand: string | null;
+  primaryImageUrl: string | null;
+  canonicalUrl: string | null;
+  availabilityStatus: string;
+  lifecycleStatus: string;
+  lastSeenAt: string;
+}
+
+export interface ProductDetail {
+  status: "ok";
+  product: ProductDetailIdentity;
+  decision: AnalystResult;
 }

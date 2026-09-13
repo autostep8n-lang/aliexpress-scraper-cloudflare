@@ -1,5 +1,5 @@
 import { scoreAndPersistMvpCountryOpportunity } from "../country/pipeline";
-import { loadDiscoveryPage, parseProductListQuery } from "../dashboard/assemble";
+import { loadDiscoveryPage, loadProductDetail, parseProductId, parseProductListQuery } from "../dashboard/assemble";
 import type { Env } from "../env";
 import type { Product } from "../products/types";
 import { isProduct, validateProduct } from "../products/validation";
@@ -35,6 +35,37 @@ export async function handleProductList(request: Request, env: Env, requestId: s
   }
   if (assembled.status === "error") {
     return jsonError(502, assembled.message, assembled.code ?? "PRODUCT_LIST_FAILED", requestId);
+  }
+  return jsonOk(assembled.data);
+}
+
+/**
+ * GET /api/products/:id — read-only product detail / analysis (P6.28).
+ *
+ * Loads one persisted product, then computes the full P5.24 / P5.25 analyst
+ * result on-read, including evidence. Never writes scores or analyst results.
+ *
+ * Outcomes map to:
+ * - 200 `{ status: "ok", product, decision }`
+ * - 404 `NOT_FOUND` / `INVALID_PRODUCT` when the id is missing or unknown
+ * - 503 `SUPABASE_NOT_CONFIGURED`
+ * - 502 with the repository's typed step code when a read fails
+ */
+export async function handleProductDetail(env: Env, requestId: string, productId: string): Promise<Response> {
+  const parsedId = parseProductId(productId);
+  if (!parsedId) {
+    return jsonError(404, "Product not found", "NOT_FOUND", requestId);
+  }
+
+  const assembled = await loadProductDetail(env, parsedId);
+  if (assembled.status === "credentials_missing") {
+    return jsonError(503, "Supabase is not configured", "SUPABASE_NOT_CONFIGURED", requestId);
+  }
+  if (assembled.status === "not_found") {
+    return jsonError(404, "Product not found", "NOT_FOUND", requestId);
+  }
+  if (assembled.status === "error") {
+    return jsonError(502, assembled.message, assembled.code ?? "PRODUCT_LOOKUP_FAILED", requestId);
   }
   return jsonOk(assembled.data);
 }

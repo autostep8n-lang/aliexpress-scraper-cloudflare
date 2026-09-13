@@ -391,6 +391,33 @@ export async function listProducts(
 }
 
 /**
+ * Read-only product lookup by primary key (P6.28). Never writes.
+ */
+export async function getProductById(env: Env, productId: string): Promise<RepositoryResult<PersistedProductRecord>> {
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    const { data, error } = await client.from("products").select(PRODUCT_SELECT).eq("id", productId).maybeSingle();
+    if (error) {
+      return {
+        status: "error",
+        code: "product_lookup_failed",
+        message: errorMessage(error, "failed to look up product"),
+      };
+    }
+    if (!data) {
+      return { status: "not_found" };
+    }
+    return { status: "found", data: data as PersistedProductRecord };
+  } catch (err) {
+    return { status: "error", code: "product_lookup_failed", message: toString(err) };
+  }
+}
+
+/**
  * Read-only latest `scores` rows for the given product ids (P6.26).
  * Never writes. Callers pick the newest `computed_at` per score_type.
  */

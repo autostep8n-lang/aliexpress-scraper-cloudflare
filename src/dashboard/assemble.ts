@@ -7,6 +7,7 @@ import { LIFECYCLE_STATES, type LifecycleStatus } from "../lifecycle/types";
 import { DEFAULT_OPPORTUNITY_THRESHOLDS, type OpportunityResult, type OpportunityTier } from "../opportunity/types";
 import type { ScoreResult, ScoreSignal } from "../scoring/types";
 import {
+  getProductById,
   listCountryOpportunityScoresForProducts,
   listProducts,
   listScoresForProducts,
@@ -18,6 +19,7 @@ import {
   MAX_PRODUCT_LIST_LIMIT,
   type DiscoveryPage,
   type DiscoveryProduct,
+  type ProductDetail,
   type ProductListQuery,
 } from "./types";
 
@@ -70,6 +72,21 @@ export type DiscoveryLoadResult =
   | { status: "credentials_missing" }
   | { status: "error"; message: string; code?: string };
 
+export type ProductDetailLoadResult =
+  | { status: "ok"; data: ProductDetail }
+  | { status: "not_found" }
+  | { status: "credentials_missing" }
+  | { status: "error"; message: string; code?: string };
+
+export function parseProductId(value: string | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const productId = value.trim();
+  if (!productId) return null;
+  if (productId.includes("/") || productId.includes("?") || productId.includes("#")) return null;
+  if (productId.length > 128) return null;
+  return productId;
+}
+
 /**
  * P6.27 ranks only this many most-recent matching products (last_seen_at DESC).
  * It is intentionally not a global ranking across the entire database.
@@ -109,6 +126,46 @@ export async function loadDiscoveryPage(env: Env, query: ProductListQuery): Prom
     status: "ok",
     data: assembleDiscoveryPage(loaded.products, loaded.scores, loaded.countryScores, query, loaded.total),
   };
+}
+
+export async function loadProductDetail(env: Env, productId: string): Promise<ProductDetailLoadResult> {
+  const loaded = await getProductById(env, productId);
+  if (loaded.status === "credentials_missing") {
+    return { status: "credentials_missing" };
+  }
+  if (loaded.status === "not_found") {
+    return { status: "not_found" };
+  }
+  if (loaded.status === "error") {
+    return { status: "error", message: loaded.message, code: loaded.code };
+  }
+  if (loaded.status !== "found") {
+    return { status: "error", message: "Unexpected repository outcome", code: "PRODUCT_LOOKUP_FAILED" };
+  }
+
+  const scores = await listScoresForProducts(env, [loaded.data.id]);
+  if (scores.status === "credentials_missing") {
+    return { status: "credentials_missing" };
+  }
+  if (scores.status === "error") {
+    return { status: "error", message: scores.message, code: scores.code };
+  }
+  if (scores.status !== "found") {
+    return { status: "error", message: "Unexpected repository outcome", code: "SCORE_LIST_FAILED" };
+  }
+
+  const countries = await listCountryOpportunityScoresForProducts(env, [loaded.data.id]);
+  if (countries.status === "credentials_missing") {
+    return { status: "credentials_missing" };
+  }
+  if (countries.status === "error") {
+    return { status: "error", message: countries.message, code: countries.code };
+  }
+  if (countries.status !== "found") {
+    return { status: "error", message: "Unexpected repository outcome", code: "COUNTRY_OPPORTUNITY_LIST_FAILED" };
+  }
+
+  return { status: "ok", data: assembleProductDetail(loaded.data, scores.data, countries.data) };
 }
 
 export async function loadOpportunitiesPage(env: Env, query: ProductListQuery): Promise<DiscoveryLoadResult> {
@@ -224,19 +281,28 @@ export function assembleDiscoveryProducts(
   scores: PersistedScoreRecord[],
   countryScores: CountryOpportunityPersistedRow[],
 ): DiscoveryProduct[] {
-  const scoresByProduct = latestScoresByProduct(scores);
-  const countriesByProduct = groupCountryScores(countryScores);
-  return products.map((product) => {
-    const productScores = scoresByProduct.get(product.id);
-    const marketOpportunity = reconstructMarketOpportunity(productScores);
-    const countryOpportunities = reconstructCountryOpportunities(product.id, countriesByProduct.get(product.id) ?? []);
-    const decision = scoreDecisionOpportunity({
-      productId: product.id,
-      ...(marketOpportunity ? { marketOpportunity } : {}),
-      ...(countryOpportunities.length > 0 ? { countryOpportunities } : {}),
-    });
-    const analyst = explainDecision(decision);
-    return {
+  return products.map((product) => compactDiscoveryProduct(assembleProductDetail(product, scores, countryScores)));
+}
+
+export function assembleProductDetail(
+  product: PersistedProductRecord,
+  scores: PersistedScoreRecord[],
+  countryScores: CountryOpportunityPersistedRow[],
+): ProductDetail {
+  const productScores = latestScoresByProduct(scores).get(product.id);
+  const countryOpportunities = reconstructCountryOpportunities(
+    product.id,
+    groupCountryScores(countryScores).get(product.id) ?? [],
+  );
+  const marketOpportunity = reconstructMarketOpportunity(productScores);
+  const decision = scoreDecisionOpportunity({
+    productId: product.id,
+    ...(marketOpportunity ? { marketOpportunity } : {}),
+    ...(countryOpportunities.length > 0 ? { countryOpportunities } : {}),
+  });
+  return {
+    status: "ok",
+    product: {
       id: product.id,
       title: product.title,
       brand: product.brand,
@@ -245,15 +311,29 @@ export function assembleDiscoveryProducts(
       availabilityStatus: product.availability_status,
       lifecycleStatus: product.lifecycle_status,
       lastSeenAt: product.last_seen_at,
-      decision: {
-        score: analyst.score,
-        selectedCountry: analyst.selectedCountry,
-        summary: analyst.summary,
-        caveats: analyst.caveats,
-        provider: analyst.provider,
-      },
-    };
-  });
+    },
+    decision: explainDecision(decision),
+  };
+}
+
+function compactDiscoveryProduct(detail: ProductDetail): DiscoveryProduct {
+  return {
+    id: detail.product.id,
+    title: detail.product.title,
+    brand: detail.product.brand,
+    primaryImageUrl: detail.product.primaryImageUrl,
+    canonicalUrl: detail.product.canonicalUrl,
+    availabilityStatus: detail.product.availabilityStatus,
+    lifecycleStatus: detail.product.lifecycleStatus,
+    lastSeenAt: detail.product.lastSeenAt,
+    decision: {
+      score: detail.decision.score,
+      selectedCountry: detail.decision.selectedCountry,
+      summary: detail.decision.summary,
+      caveats: detail.decision.caveats,
+      provider: detail.decision.provider,
+    },
+  };
 }
 
 function latestScoresByProduct(scores: PersistedScoreRecord[]): Map<string, Map<string, PersistedScoreRecord>> {

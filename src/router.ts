@@ -1,4 +1,4 @@
-import { handleDashboard, handleOpportunitiesDashboard } from "./dashboard";
+import { handleDashboard, handleOpportunitiesDashboard, handleProductDetailDashboard } from "./dashboard";
 import { handleDiscover } from "./api/discover";
 import { handleGoogleTrends } from "./api/google-trends";
 import { handleInstagram, handleInstagramOAuthCallback, handleInstagramOAuthStart } from "./api/instagram";
@@ -7,10 +7,11 @@ import { handleOpportunityList } from "./api/opportunities";
 import { handleReddit } from "./api/reddit";
 import { handleYouTube } from "./api/youtube";
 import { handleHealth, handleSupabaseHealth } from "./health";
-import { handleProductIngest, handleProductList } from "./api/products";
+import { handleProductDetail, handleProductIngest, handleProductList } from "./api/products";
 import { handleScrape } from "./api/scrape";
 import { jsonError, methodNotAllowed, notFound, notImplemented } from "./utils/http";
 import { createRequestId, logError, logRequest } from "./logging";
+import { parseProductId } from "./dashboard/assemble";
 import type { Env } from "./env";
 
 /** Returns a 405 response when the request is not a GET/HEAD, else null. */
@@ -146,10 +147,29 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
       return handleOpportunitiesDashboard(url, env);
     }
 
-    default:
+    default: {
+      const productApiId = matchSingleSegment(url.pathname, "/api/products/");
+      if (productApiId !== null) {
+        const denied = guardGet(request, requestId);
+        if (denied) return denied;
+        return handleProductDetail(env, requestId, productApiId);
+      }
+      const productPageId = matchSingleSegment(url.pathname, "/products/");
+      if (productPageId !== null) {
+        const denied = guardGet(request, requestId);
+        if (denied) return denied;
+        return handleProductDetailDashboard(url, env, productPageId);
+      }
       if (url.pathname.startsWith("/api/")) {
         return notImplemented(`Not implemented: ${url.pathname}`, requestId);
       }
       return notFound("Not Found", requestId);
+    }
   }
+}
+
+function matchSingleSegment(pathname: string, prefix: string): string | null {
+  if (!pathname.startsWith(prefix)) return null;
+  const rest = pathname.slice(prefix.length);
+  return parseProductId(rest);
 }
