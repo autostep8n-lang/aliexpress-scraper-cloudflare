@@ -66,7 +66,9 @@
   - Deterministic product-global aggregator in `src/decision/`; composes P1.10 `market_opportunity` with the best eligible P4.23 `country_opportunity` using equal weighting; on-read via API/dashboard.
 - **P5.25 — AI Product Analyst: DONE**
   - Deterministic template explainer in `src/analyst/`; explains frozen P5.24 score, evidence and decision; compact fields exposed on-read; no LLM or analyst persistence required.
-- **Next task: P6.28 — Product Detail / Analysis**
+- **P6.28 — Product Detail / Analysis: DONE**
+  - Read-only product detail API (`GET /api/products/:id`) and HTML analysis surface (`GET /products/:id`) implemented; reuses deterministic P5.24 / P5.25 analyst evidence on-read; malformed product IDs return the existing 404 `NOT_FOUND` contract without querying the database; production smoke verification passed.
+- **Next task: P6.26 — Product Discovery Dashboard**
 
 ## P0 — Foundation
 
@@ -129,7 +131,7 @@
 |---|---|---|---|
 | 26 | Product Discovery Dashboard | TODO | Build after intelligence data is available |
 | 27 | Top Opportunities | TODO | Rankings |
-| 28 | Product Detail / Analysis | TODO | Explain the why behind the opportunity |
+| 28 | Product Detail / Analysis | DONE | Read-only product detail API + HTML analysis surface; reuses deterministic P5.24 / P5.25 analyst evidence on-read; malformed product IDs return existing 404 `NOT_FOUND`; production smoke verification passed |
 
 ## P7 — Automation
 
