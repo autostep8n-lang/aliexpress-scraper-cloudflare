@@ -62,7 +62,11 @@
   - Deterministic product × country scoring under `src/country/`; persistence in `country_opportunity_scores`.
   - Missing optional signals remain excluded from the weighted mean per the existing engine; absence of country evidence forces tier `unknown`.
   - Current production ingest is SA MVP.
-- **Next task: P5.24 — Opportunity Score**
+- **P5.24 — Opportunity Score: DONE**
+  - Deterministic product-global aggregator in `src/decision/`; composes P1.10 `market_opportunity` with the best eligible P4.23 `country_opportunity` using equal weighting; on-read via API/dashboard.
+- **P5.25 — AI Product Analyst: DONE**
+  - Deterministic template explainer in `src/analyst/`; explains frozen P5.24 score, evidence and decision; compact fields exposed on-read; no LLM or analyst persistence required.
+- **Next task: P6.28 — Product Detail / Analysis**
 
 ## P0 — Foundation
 
@@ -116,8 +120,8 @@
 
 | # | Feature | Status | Notes |
 |---|---|---|---|
-| 24 | Opportunity Score | TODO | Aggregate product and market signals |
-| 25 | AI Product Analyst | TODO | Explain score, evidence and decision |
+| 24 | Opportunity Score | DONE | Deterministic product-global aggregator in `src/decision/`; composes P1.10 `market_opportunity` with the best eligible P4.23 `country_opportunity` using equal weighting; on-read via API/dashboard |
+| 25 | AI Product Analyst | DONE | Deterministic template explainer in `src/analyst/`; explains frozen P5.24 score, evidence and decision; compact fields exposed on-read; no LLM or analyst persistence required |
 
 ## P6 — Dashboard
 
