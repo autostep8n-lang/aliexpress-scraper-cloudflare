@@ -228,11 +228,12 @@ function renderMarketEvidence(evidence: AnalystEvidence): string {
 }
 
 function renderCountryEvidence(evidence: AnalystEvidence): string {
-  if (!evidence.country.present || evidence.country.country === null) {
+  const countryName = evidence.country.country;
+  if (!evidence.country.present || countryName === null) {
     return `<h3>Selected country</h3><p class="empty">No country opportunity evidence.</p>`;
   }
   const country = evidence.country;
-  return `<h3>Selected country ${escapeHtml(country.country)} scored ${country.value} (${escapeHtml(String(country.tier))})</h3>
+  return `<h3>Selected country ${escapeHtml(countryName)} scored ${country.value} (${escapeHtml(String(country.tier))})</h3>
       <ul class="signals">
         <li>Latest search interest: ${country.latestValue ?? "n/a"}</li>
         <li>Change: ${country.change ?? "n/a"}</li>
