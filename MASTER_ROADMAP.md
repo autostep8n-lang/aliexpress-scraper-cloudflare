@@ -70,7 +70,9 @@
   - Read-only product discovery dashboard (`GET /`) lists persisted products by `last_seen_at` descending with search/lifecycle filters and pagination; compact on-read P5.24 / P5.25 decision fields; titles link to the P6.28 detail/analysis surface; JSON list API at `GET /api/products`; existing error contracts preserved.
 - **P6.28 — Product Detail / Analysis: DONE**
   - Read-only product detail API (`GET /api/products/:id`) and HTML analysis surface (`GET /products/:id`) implemented; reuses deterministic P5.24 / P5.25 analyst evidence on-read; malformed product IDs return the existing 404 `NOT_FOUND` contract without querying the database; production smoke verification passed.
-- **Next task: P6.27 — Top Opportunities**
+- **P6.27 — Top Opportunities: DONE**
+  - Read-only ranked opportunities surface (`GET /opportunities` HTML + `GET /api/opportunities` JSON); on-read P5.24 `decision_opportunity` ranking over the 200 most-recent matching products; excludes unknown/zero-weight scores; search/lifecycle filters and pagination; titles link to P6.28 detail/analysis; existing error contracts preserved.
+- **Next task: P7.29 — Daily Product Discovery**
 
 ## P0 — Foundation
 
@@ -132,7 +134,7 @@
 | # | Feature | Status | Notes |
 |---|---|---|---|
 | 26 | Product Discovery Dashboard | DONE | Read-only recency-based product list (`GET /` + `GET /api/products`); search/lifecycle filters and pagination; compact on-read P5.24 / P5.25 decision fields; titles link to P6.28 detail/analysis; existing error contracts preserved |
-| 27 | Top Opportunities | TODO | Rankings |
+| 27 | Top Opportunities | DONE | Read-only ranked opportunities (`GET /opportunities` + `GET /api/opportunities`); on-read P5.24 ranking over the 200 most-recent matching products; excludes unknown/zero-weight; search/lifecycle filters and pagination; titles link to P6.28; existing error contracts preserved |
 | 28 | Product Detail / Analysis | DONE | Read-only product detail API + HTML analysis surface; reuses deterministic P5.24 / P5.25 analyst evidence on-read; malformed product IDs return existing 404 `NOT_FOUND`; production smoke verification passed |
 
 ## P7 — Automation
