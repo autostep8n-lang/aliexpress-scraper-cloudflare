@@ -20,6 +20,10 @@ export function logRequest(entry: RequestLog): void {
   console.log(JSON.stringify({ level: "info", event: "request", ...entry }));
 }
 
+export function logInfo(event: string, fields: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ level: "info", event, ...fields }));
+}
+
 export function logError(message: string, fields: Record<string, unknown>): void {
   console.error(JSON.stringify({ level: "error", event: "error", message, ...fields }));
 }

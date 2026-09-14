@@ -36,3 +36,10 @@ describe("wrangler.toml Supabase bindings", () => {
     }
   });
 });
+
+describe("wrangler.toml scheduled discovery cron", () => {
+  it("declares a single daily cron trigger", () => {
+    expect(wranglerToml).toMatch(/\[triggers\]/);
+    expect(wranglerToml).toMatch(/crons\s*=\s*\[\s*"0 0 \* \* \*"\s*\]/);
+  });
+});

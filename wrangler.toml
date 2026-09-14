@@ -32,6 +32,10 @@ workers_dev = true
 
 keep_vars = true
 
+# Daily TikTok Shop product discovery (P7.29). Midnight UTC; no extra secrets.
+[triggers]
+crons = ["0 0 * * *"]
+
 [secrets]
 required = [ "SUPABASE_URL", "SUPABASE_SECRET_KEY" ]
 
