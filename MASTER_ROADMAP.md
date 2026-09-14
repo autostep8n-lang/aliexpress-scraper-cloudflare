@@ -72,7 +72,13 @@
   - Read-only product detail API (`GET /api/products/:id`) and HTML analysis surface (`GET /products/:id`) implemented; reuses deterministic P5.24 / P5.25 analyst evidence on-read; malformed product IDs return the existing 404 `NOT_FOUND` contract without querying the database; production smoke verification passed.
 - **P6.27 — Top Opportunities: DONE**
   - Read-only ranked opportunities surface (`GET /opportunities` HTML + `GET /api/opportunities` JSON); on-read P5.24 `decision_opportunity` ranking over the 200 most-recent matching products; excludes unknown/zero-weight scores; search/lifecycle filters and pagination; titles link to P6.28 detail/analysis; existing error contracts preserved.
-- **Next task: P7.29 — Daily Product Discovery**
+- **P7.29 — Daily Product Discovery: DONE**
+  - Cloudflare Worker `scheduled` handler with daily Cron Trigger `0 0 * * *` (midnight UTC).
+  - Reuses existing TikTok Shop discovery (`tiktokDiscovery.discover`) and existing `normalizeProduct` + `upsertProduct` persistence; no jobs/job_runs.
+  - Deterministic scheduled defaults: query `"earbuds"`, no region, no category, limit 20.
+  - Idempotent persistence by `(source, external_id)`; focused tests and typed error handling; no new secrets or providers.
+  - Implementation commit `71f78f8`. Not deployed.
+- **Next task: P7.30 — Automated Scoring Pipeline**
 
 ## P0 — Foundation
 
@@ -141,7 +147,7 @@
 
 | # | Feature | Status | Notes |
 |---|---|---|---|
-| 29 | Daily Product Discovery | TODO | Not started |
+| 29 | Daily Product Discovery | DONE | Cloudflare scheduled handler with daily Cron Trigger at 0 0 * * *; reuses existing TikTok Shop discovery, normalizeProduct and upsertProduct flow; scheduled defaults are query "earbuds", no region/category, limit 20; idempotent persistence; focused tests and error handling; no new secrets/providers. |
 | 30 | Automated Scoring Pipeline | TODO | Not started |
 | 31 | Alerts | TODO | Not started |
 | 32 | Reports | TODO | Not started |
