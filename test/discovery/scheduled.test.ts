@@ -5,6 +5,7 @@ import {
   DAILY_DISCOVERY_LIMIT,
   DAILY_DISCOVERY_QUERY,
   runDailyDiscovery,
+  runScheduledAutomation,
 } from "../../src/discovery/scheduled";
 import { isTiktokHost } from "../../src/scrapers/tiktok";
 import { createMockPostgrest, type MockPostgrest } from "../helpers/postgrest-mock";
@@ -180,5 +181,76 @@ describe("Worker scheduled handler", () => {
 
     expect(server.store.products).toHaveLength(1);
     expect(server.store.product_sources.map((row) => row.external_id)).toEqual(["111"]);
+  });
+});
+
+describe("runScheduledAutomation (P7.29 + P7.30)", () => {
+  let server: MockPostgrest;
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("runs automated scoring after a successful discovery and logs a scoring summary", async () => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", compositeFetch(server, searchPageHtml([searchItem("111")])));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const result = await runScheduledAutomation(configuredEnv(), ctx, scheduledController());
+
+    expect(result.discovery.status).toBe("ok");
+    expect(result.scoring).not.toBeNull();
+    expect(result.scoring).toMatchObject({ status: "ok" });
+
+    const scoringLog = logSpy.mock.calls
+      .map((call) => JSON.parse(String(call[0])) as Record<string, unknown>)
+      .find((entry) => entry.event === "scheduled.scoring");
+    expect(scoringLog).toBeDefined();
+    expect(scoringLog).toMatchObject({
+      level: "info",
+      total: expect.any(Number),
+      scored: expect.any(Number),
+      skipped: expect.any(Number),
+      failed: expect.any(Number),
+      persisted: expect.any(Number),
+      durationMs: expect.any(Number),
+    });
+  });
+
+  it("does not run scoring when discovery fails", async () => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", compositeFetch(server, "<html><body>Captcha required to continue.</body></html>"));
+
+    const result = await runScheduledAutomation(configuredEnv(), ctx, scheduledController());
+
+    expect(result.discovery.status).toBe("error");
+    expect(result.scoring).toBeNull();
+    expect(server.store.products).toHaveLength(0);
+  });
+
+  it("does not erase successful discovery when scoring fails", async () => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", compositeFetch(server, searchPageHtml([searchItem("111")])));
+    server.override("GET", "/rest/v1/product_sources", 500, { message: "storage down" });
+
+    const result = await runScheduledAutomation(configuredEnv(), ctx, scheduledController());
+
+    expect(result.discovery.status).toBe("ok");
+    expect(server.store.products).toHaveLength(1);
+    expect(server.store.product_sources).toHaveLength(1);
+    expect(result.scoring).not.toBeNull();
+    expect(result.scoring?.failed).toBeGreaterThanOrEqual(1);
+  });
+
+  it("skips both discovery and scoring when Supabase is not configured", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const result = await runScheduledAutomation({} as Env, ctx, scheduledController());
+
+    expect(result.discovery.status).toBe("skipped");
+    expect(result.scoring).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

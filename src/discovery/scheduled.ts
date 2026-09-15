@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import { logError, logInfo } from "../logging";
 import { ScraperError } from "../scrapers/types";
+import { runAutomatedScoring, type AutomatedScoringSummary } from "../scoring/pipeline";
 import { findDiscovery } from "./registry";
 import type { DiscoveryResult } from "./types";
 
@@ -152,4 +153,29 @@ export async function runDailyDiscovery(
     durationMs,
   });
   return result;
+}
+
+/** Combined scheduled outcome: discovery, plus scoring only on discovery success. */
+export interface ScheduledAutomationResult {
+  discovery: DailyDiscoveryRunResult;
+  scoring: AutomatedScoringSummary | null;
+}
+
+/**
+ * Scheduled automation (P7.29 + P7.30): run daily discovery first, then score
+ * the persisted products. Scoring is skipped entirely when discovery did not
+ * succeed, so a failed discovery is never scored against. A scoring failure
+ * cannot erase the discovery that already succeeded.
+ */
+export async function runScheduledAutomation(
+  env: Env,
+  ctx: ExecutionContext,
+  scheduled: ScheduledDiscoveryContext,
+): Promise<ScheduledAutomationResult> {
+  const discovery = await runDailyDiscovery(env, ctx, scheduled);
+  if (discovery.status !== "ok") {
+    return { discovery, scoring: null };
+  }
+  const scoring = await runAutomatedScoring(env);
+  return { discovery, scoring };
 }

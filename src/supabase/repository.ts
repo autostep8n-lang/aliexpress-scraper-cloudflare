@@ -17,6 +17,7 @@ import type {
 } from "../market/types";
 import { validateProduct } from "../products/validation";
 import { getSupabaseClient } from "./client";
+import type { ScoreRow } from "../scoring/types";
 import { longestToken } from "../matching/normalize";
 import { decideMerge, matchSignals, type MatchResult } from "../matching/match";
 import {
@@ -159,6 +160,7 @@ const COUNTRY_OPPORTUNITY_SELECT =
 const COUNTRY_OPPORTUNITY_CONFLICT = "product_id,country,score_type";
 const SCORE_SELECT =
   "id, product_id, product_source_id, score_type, value, min_value, max_value, version, inputs, computed_at";
+const SCORE_CONFLICT = "product_id,score_type,version";
 
 /**
  * Ingests one already-normalized Phase 1 `Product` into the P0.2 schema.
@@ -490,6 +492,41 @@ export async function listCountryOpportunityScoresForProducts(
     return { status: "found", data: data as CountryOpportunityPersistedRow[] };
   } catch (err) {
     return { status: "error", code: "country_opportunity_list_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Read-only observations for the given product ids (P7.30). Never writes.
+ * Callers pick the most recent row per product when they need current values.
+ */
+export async function listObservationsForProducts(
+  env: Env,
+  productIds: string[],
+): Promise<RepositoryResult<PersistedObservationRecord[]>> {
+  if (productIds.length === 0) {
+    return { status: "found", data: [] };
+  }
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    const { data, error } = await client
+      .from("product_sources")
+      .select(OBSERVATION_SELECT)
+      .in("product_id", productIds)
+      .order("last_seen_at", { ascending: false });
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "observation_list_failed",
+        message: errorMessage(error, "failed to list product observations"),
+      };
+    }
+    return { status: "found", data: data as PersistedObservationRecord[] };
+  } catch (err) {
+    return { status: "error", code: "observation_list_failed", message: toString(err) };
   }
 }
 
@@ -915,6 +952,54 @@ export async function upsertCountryOpportunityScores(
     };
   } catch (err) {
     return { status: "error", code: "country_opportunity_upsert_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Bulk-upserts generic computed scores (P7.30).
+ *
+ * Deduplication is on `(product_id, score_type, version)`: re-running the
+ * pipeline replaces the row (value, inputs, computed_at) instead of appending
+ * duplicate history. No source row is required; these scores are product-scoped.
+ * A row without a `product_id` cannot satisfy the NOT NULL column, so it is
+ * rejected as `invalid` rather than sent to PostgREST. Never throws.
+ */
+export async function upsertScores(
+  env: Env,
+  rows: ScoreRow[],
+): Promise<RepositoryResult<PersistedScoreRecord[]>> {
+  if (rows.length === 0) {
+    return { status: "updated", data: [] };
+  }
+
+  const invalid = rows.find((row) => typeof row.product_id !== "string" || row.product_id.length === 0);
+  if (invalid) {
+    return { status: "invalid", message: "score rows require a non-empty product_id" };
+  }
+
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    const { data, error, status } = await client
+      .from("scores")
+      .upsert(rows, { onConflict: SCORE_CONFLICT })
+      .select(SCORE_SELECT);
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "scores_upsert_failed",
+        message: errorMessage(error, "failed to upsert scores"),
+      };
+    }
+    return {
+      status: status === 201 ? "created" : "updated",
+      data: data as PersistedScoreRecord[],
+    };
+  } catch (err) {
+    return { status: "error", code: "scores_upsert_failed", message: toString(err) };
   }
 }
 

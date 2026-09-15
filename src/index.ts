@@ -1,4 +1,4 @@
-import { runDailyDiscovery } from "./discovery/scheduled";
+import { runScheduledAutomation } from "./discovery/scheduled";
 import type { Env } from "./env";
 import { routeRequest } from "./router";
 
@@ -7,6 +7,6 @@ export default {
     return routeRequest(request, env, ctx);
   },
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    await runDailyDiscovery(env, ctx, { cron: controller.cron, scheduledTime: controller.scheduledTime });
+    await runScheduledAutomation(env, ctx, { cron: controller.cron, scheduledTime: controller.scheduledTime });
   },
 } satisfies ExportedHandler<Env>;

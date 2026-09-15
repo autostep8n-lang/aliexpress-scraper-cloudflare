@@ -78,7 +78,13 @@
   - Deterministic scheduled defaults: query `"earbuds"`, no region, no category, limit 20.
   - Idempotent persistence by `(source, external_id)`; focused tests and typed error handling; no new secrets or providers.
   - Implementation commit `71f78f8`. Not deployed.
-- **Next task: P7.30 — Automated Scoring Pipeline**
+- **P7.30 — Automated Scoring Pipeline: DONE**
+  - Chained into the existing daily Cron Trigger `0 0 * * *` after discovery; runs only when discovery succeeds, and a scoring failure never erases successful discovery.
+  - Persists `competition` / `market_opportunity` from the existing P1.10 engine via a new bulk writer keyed on `(product_id, score_type, version)` (new unique constraint migration `20260817000017`); re-runs update in place and never append duplicates.
+  - `decision_opportunity` (P5.24) and the analyst explanation (P5.25) remain on-read.
+  - Bounded paging (50 per batch, 200 products max) reconstructs demand from persisted observations; competition is skipped with an explicit reason (discovery collects no competitor data) instead of writing a fabricated value.
+  - Focused pipeline, repository, migration and scheduled-integration tests; no new secrets or providers. Not deployed.
+- **Next task: P7.31 — Alerts**
 
 ## P0 — Foundation
 
@@ -148,7 +154,7 @@
 | # | Feature | Status | Notes |
 |---|---|---|---|
 | 29 | Daily Product Discovery | DONE | Cloudflare scheduled handler with daily Cron Trigger at 0 0 * * *; reuses existing TikTok Shop discovery, normalizeProduct and upsertProduct flow; scheduled defaults are query "earbuds", no region/category, limit 20; idempotent persistence; focused tests and error handling; no new secrets/providers. |
-| 30 | Automated Scoring Pipeline | TODO | Not started |
+| 30 | Automated Scoring Pipeline | DONE | Chained into the existing daily cron after discovery; persists `competition` / `market_opportunity` via existing P1.10 engine keyed on `(product_id, score_type, version)`; P5.24/P5.25 stay on-read; bounded paging; skips competition when no real input exists. |
 | 31 | Alerts | TODO | Not started |
 | 32 | Reports | TODO | Not started |
 

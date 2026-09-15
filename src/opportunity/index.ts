@@ -29,6 +29,7 @@ export type {
 } from "./types";
 
 import type { OpportunityResult } from "./types";
+import type { ScoreRow } from "../scoring/types";
 
 export interface OpportunityRowRefs {
   productId?: string;
@@ -44,7 +45,7 @@ export interface OpportunityRowRefs {
 export function toOpportunityRows(
   result: OpportunityResult,
   refs: OpportunityRowRefs = {},
-): Array<Record<string, unknown>> {
+): ScoreRow[] {
   const base = {
     product_id: refs.productId ?? null,
     product_source_id: refs.productSourceId ?? null,

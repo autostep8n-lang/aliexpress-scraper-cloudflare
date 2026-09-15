@@ -3,19 +3,21 @@ export { scoreProductQuality, PRODUCT_QUALITY_SIGNALS } from "./quality";
 export type {
   ComputeScoreOptions,
   ScoreResult,
+  ScoreRow,
   ScoreSignal,
   ScoreSignalDefinition,
   ScoreSignalEvaluation,
 } from "./types";
 
 import type { ScoreResult } from "./types";
+import type { ScoreRow } from "./types";
 
 /**
  * Maps a computed score to the shape of the `scores` table (see
  * supabase/migrations/20260817000007_metrics.sql). Pure and deterministic: it
  * never touches Supabase, it only produces the row that a caller may persist.
  */
-export function toScoreRow(score: ScoreResult, refs: { productId?: string; productSourceId?: string | null } = {}): Record<string, unknown> {
+export function toScoreRow(score: ScoreResult, refs: { productId?: string; productSourceId?: string | null } = {}): ScoreRow {
   return {
     product_id: refs.productId ?? null,
     product_source_id: refs.productSourceId ?? null,

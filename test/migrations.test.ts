@@ -45,6 +45,7 @@ const EXPECTED_MIGRATIONS = [
   "20260817000014_instagram.sql",
   "20260817000015_country_opportunity.sql",
   "20260817000016_products_dedup_key_unique.sql",
+  "20260817000017_scores_unique.sql",
 ] as const;
 
 describe("Supabase migrations", () => {
@@ -113,6 +114,20 @@ describe("Supabase migrations", () => {
     expect(statements).toMatch(/drop index if exists public\.products_dedup_key_uidx/i);
     expect(statements).not.toMatch(/where\s+dedup_key\s+is\s+not\s+null/i);
     expect(ALL_MIGRATION_SQL).toMatch(/constraint products_dedup_key_key unique \(dedup_key\)/i);
+  });
+
+  it("gives scores a UNIQUE (product_id, score_type, version) constraint for PostgREST ON CONFLICT", () => {
+    const migration = readFileSync(join(migrationsDir, "20260817000017_scores_unique.sql"), "utf8");
+    const statements = migration
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("--"))
+      .join("\n");
+    expect(statements).toMatch(
+      /add constraint scores_product_type_version_key unique \(product_id, score_type, version\)/i,
+    );
+    expect(statements).toMatch(/raise exception/i);
+    expect(statements).not.toMatch(/delete\s+from/i);
+    expect(statements).not.toMatch(/drop\s+table/i);
   });
 
   it("sets a shared updated_at trigger on every table that has updated_at", () => {

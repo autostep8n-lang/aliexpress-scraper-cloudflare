@@ -4,10 +4,13 @@ import {
   getObservation,
   getProductById,
   listCountryOpportunityScoresForProducts,
+  listObservationsForProducts,
   listProducts,
   listScoresForProducts,
   upsertProduct,
+  upsertScores,
 } from "../src/supabase/repository";
+import type { ScoreRow } from "../src/scoring";
 import type { Product } from "../src/products/types";
 import { normalizeProduct } from "../src/products/normalize";
 import { computeGtinCheckDigit } from "../src/matching/normalize";
@@ -814,5 +817,142 @@ describe("getProductById (P6.28 read-only)", () => {
     expect(result.status).toBe("error");
     if (result.status !== "error") return;
     expect(result.code).toBe("product_lookup_failed");
+  });
+});
+
+function scoreRow(overrides: Partial<ScoreRow> = {}): ScoreRow {
+  return {
+    product_id: PRODUCT_ID,
+    product_source_id: null,
+    score_type: "market_opportunity",
+    value: 42,
+    min_value: 0,
+    max_value: 100,
+    version: 1,
+    inputs: { score_type: "market_opportunity", normalized: 0.42, signals: [] },
+    computed_at: "2026-08-18T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("upsertScores (P7.30 bulk writer)", () => {
+  let server: MockPostgrest;
+
+  beforeEach(() => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", server.fetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("returns updated with an empty array without querying for empty input", async () => {
+    const result = await upsertScores(configuredEnv(), []);
+    expect(result).toEqual({ status: "updated", data: [] });
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it("returns credentials_missing without touching the network when unconfigured", async () => {
+    const fetchMock = vi.fn(server.fetch);
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await upsertScores({} as Env, [scoreRow()]);
+    expect(result.status).toBe("credentials_missing");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("bulk-upserts score rows keyed on (product_id, score_type, version)", async () => {
+    const result = await upsertScores(configuredEnv(), [
+      scoreRow({ score_type: "competition", value: 30, inputs: { score_type: "competition" } }),
+      scoreRow({ score_type: "market_opportunity", value: 60, inputs: { score_type: "market_opportunity" } }),
+    ]);
+
+    expect(result.status).toBe("created");
+    if (result.status !== "created") return;
+    expect(result.data).toHaveLength(2);
+    expect(server.store.scores).toHaveLength(2);
+
+    const request = requestsTo(server, "POST", "/rest/v1/scores")[0];
+    expect(decodeURIComponent(request.url)).toContain("on_conflict=product_id,score_type,version");
+    const body = request.body as Array<Record<string, unknown>>;
+    expect(body[0]).toMatchObject({
+      product_id: PRODUCT_ID,
+      score_type: "competition",
+      value: 30,
+      version: 1,
+    });
+  });
+
+  it("updates the existing row instead of appending on conflict", async () => {
+    const first = await upsertScores(configuredEnv(), [scoreRow({ value: 42 })]);
+    const second = await upsertScores(configuredEnv(), [scoreRow({ value: 77 })]);
+
+    expect(first.status).toBe("created");
+    expect(second.status).toBe("updated");
+    expect(server.store.scores).toHaveLength(1);
+    expect(server.store.scores[0].value).toBe(77);
+
+    const secondRequest = requestsTo(server, "POST", "/rest/v1/scores")[1];
+    const body = secondRequest.body as Array<Record<string, unknown>>;
+    expect(body[0].computed_at).toBe("2026-08-18T10:00:00.000Z");
+  });
+
+  it("rejects rows without a product_id as invalid without a request", async () => {
+    const fetchMock = vi.fn(server.fetch);
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await upsertScores(configuredEnv(), [scoreRow({ product_id: null })]);
+    expect(result.status).toBe("invalid");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a typed error when the database rejects the upsert", async () => {
+    server.override("POST", "/rest/v1/scores", 500, { message: "db down" });
+    const result = await upsertScores(configuredEnv(), [scoreRow()]);
+    expect(result.status).toBe("error");
+    if (result.status !== "error") return;
+    expect(result.code).toBe("scores_upsert_failed");
+    expect(result.message).toContain("db down");
+  });
+});
+
+describe("listObservationsForProducts (P7.30 read-only)", () => {
+  let server: MockPostgrest;
+
+  beforeEach(() => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", server.fetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("returns an empty array without querying when no product ids are given", async () => {
+    const result = await listObservationsForProducts(configuredEnv(), []);
+    expect(result).toEqual({ status: "found", data: [] });
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it("reads observations for the given products without writing", async () => {
+    server.seed("product_sources", [
+      { id: "o-1", product_id: PRODUCT_ID, external_id: "ext-1", rating_count: 12, last_seen_at: "2026-08-18T10:00:00.000Z" },
+      { id: "o-2", product_id: OTHER_ID, external_id: "ext-2", rating_count: 5, last_seen_at: "2026-08-18T09:00:00.000Z" },
+    ]);
+    const result = await listObservationsForProducts(configuredEnv(), [PRODUCT_ID]);
+    expect(result.status).toBe("found");
+    if (result.status !== "found") return;
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].product_id).toBe(PRODUCT_ID);
+    expect(server.requests.every((request) => request.method === "GET")).toBe(true);
+  });
+
+  it("returns a typed error when the read fails", async () => {
+    server.override("GET", "/rest/v1/product_sources", 500, { message: "db down" });
+    const result = await listObservationsForProducts(configuredEnv(), [PRODUCT_ID]);
+    expect(result.status).toBe("error");
+    if (result.status !== "error") return;
+    expect(result.code).toBe("observation_list_failed");
   });
 });

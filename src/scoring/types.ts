@@ -63,3 +63,21 @@ export interface ComputeScoreOptions {
   /** Decimal places for the final score; defaults to 0 (integer). */
   rounding?: number;
 }
+
+/**
+ * Row shape for the generic `scores` table (see
+ * supabase/migrations/20260817000007_metrics.sql). Pure mappers (`toScoreRow`,
+ * `toOpportunityRows`) produce these; repository writers persist them keyed on
+ * `(product_id, score_type, version)`.
+ */
+export interface ScoreRow {
+  product_id: string | null;
+  product_source_id: string | null;
+  score_type: string;
+  value: number;
+  min_value: number | null;
+  max_value: number | null;
+  version: number;
+  inputs: Record<string, unknown>;
+  computed_at?: string;
+}
