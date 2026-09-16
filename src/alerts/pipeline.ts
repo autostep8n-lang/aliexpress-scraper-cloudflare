@@ -275,10 +275,10 @@ export function lifecycleEvidence(products: readonly PersistedProductRecord[]): 
   }));
 }
 
-/** Read-only page of active alerts for `GET /api/alerts` (most recent first). */
+/** Read-only page of alerts for `GET /api/alerts` (most recent first). */
 export async function loadAlertsPage(
   env: Env,
-  filter: { limit: number; offset: number },
+  filter: { limit: number; offset: number; status?: string },
 ): Promise<
   | { status: "ok"; data: { alerts: PersistedAlertRecord[]; page: { limit: number; offset: number; count: number } } }
   | { status: "credentials_missing" }
@@ -308,8 +308,11 @@ function toAlertRow(candidate: AlertCandidate, evaluatedAt: string): AlertRow {
     status: "active",
     dedup_key: candidate.dedupKey,
     title: candidate.title,
-    message: candidate.message,
-    evidence: candidate.evidence,
+    summary: candidate.summary,
+    country: candidate.country ?? null,
+    value: candidate.value ?? null,
+    tier: candidate.tier ?? null,
+    inputs: candidate.inputs,
     last_seen_at: evaluatedAt,
     resolved_at: null,
   };

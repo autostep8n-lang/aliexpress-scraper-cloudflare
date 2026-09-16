@@ -15,6 +15,7 @@ import {
   HIGH_MARKET_OPPORTUNITY_THRESHOLD,
   type AlertCandidate,
   type AlertEngineInput,
+  type AlertSeverity,
   type AlertType,
   type CountryOpportunityAlertEvidence,
   type LifecycleAlertEvidence,
@@ -23,6 +24,22 @@ import {
 
 export const MARKET_OPPORTUNITY_SCORE_TYPE = "market_opportunity";
 export const COUNTRY_OPPORTUNITY_SCORE_TYPE = "country_opportunity";
+
+/**
+ * Deterministic severity for each evidence family, from least to most
+ * attention-worthy. Kept in one place so the mapping is explicit and testable
+ * rather than derived from an opaque score band.
+ */
+const SEVERITY_BY_ALERT_TYPE: Record<AlertType, AlertSeverity> = {
+  high_market_opportunity: "critical",
+  high_country_opportunity: "warning",
+  lifecycle_review: "info",
+};
+
+/** The severity assigned to a given alert family. */
+export function severityForAlertType(alertType: AlertType): AlertSeverity {
+  return SEVERITY_BY_ALERT_TYPE[alertType];
+}
 
 /** Stable identity of an alert: one row per product x type x dedup_key. */
 export function candidateKey(productId: string, alertType: string, dedupKey: string): string {
@@ -80,13 +97,14 @@ export function evaluateMarketOpportunity(evidence: MarketOpportunityAlertEviden
   return {
     productId: evidence.productId,
     alertType: "high_market_opportunity",
-    severity: "high",
+    severity: severityForAlertType("high_market_opportunity"),
     dedupKey: "market_opportunity:high",
     title: "High market opportunity",
-    message: `Market opportunity score ${evidence.value} meets the high threshold.`,
-    evidence: {
+    summary: `Market opportunity score ${evidence.value} meets the high threshold.`,
+    value: evidence.value,
+    tier: "high",
+    inputs: {
       score_type: evidence.scoreType,
-      value: evidence.value,
       total_weight: evidence.totalWeight,
       threshold: HIGH_MARKET_OPPORTUNITY_THRESHOLD,
     },
@@ -106,16 +124,16 @@ export function evaluateCountryOpportunity(evidence: CountryOpportunityAlertEvid
   return {
     productId: evidence.productId,
     alertType: "high_country_opportunity",
-    severity: "high",
+    severity: severityForAlertType("high_country_opportunity"),
     dedupKey: `country_opportunity:${country}:high`,
     title: `High opportunity in ${country}`,
-    message: `Country opportunity score ${evidence.value} in ${country} is tiered high.`,
-    evidence: {
+    summary: `Country opportunity score ${evidence.value} in ${country} is tiered high.`,
+    country,
+    value: evidence.value,
+    tier: "high",
+    inputs: {
       score_type: evidence.scoreType,
-      country,
-      value: evidence.value,
       total_weight: evidence.totalWeight,
-      tier: evidence.tier,
     },
   };
 }
@@ -130,11 +148,11 @@ export function evaluateLifecycle(evidence: LifecycleAlertEvidence): AlertCandid
       {
         productId: evidence.productId,
         alertType: "lifecycle_review",
-        severity: "medium",
+        severity: severityForAlertType("lifecycle_review"),
         dedupKey: "lifecycle:inactive",
         title: "Product inactive",
-        message: "Product is inactive and should be reviewed.",
-        evidence: { lifecycle_status: status },
+        summary: "Product is inactive and should be reviewed.",
+        inputs: { lifecycle_status: status },
       },
     ];
   }
@@ -144,11 +162,11 @@ export function evaluateLifecycle(evidence: LifecycleAlertEvidence): AlertCandid
       {
         productId: evidence.productId,
         alertType: "lifecycle_review",
-        severity: "medium",
+        severity: severityForAlertType("lifecycle_review"),
         dedupKey: "lifecycle:archived",
         title: "Product archived",
-        message: "Product is archived and should be reviewed.",
-        evidence: { lifecycle_status: status },
+        summary: "Product is archived and should be reviewed.",
+        inputs: { lifecycle_status: status },
       },
     ];
   }

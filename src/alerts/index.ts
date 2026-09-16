@@ -14,6 +14,7 @@ export {
   evaluateMarketOpportunity,
   isAlertType,
   MARKET_OPPORTUNITY_SCORE_TYPE,
+  severityForAlertType,
 } from "./engine";
 
 export {
@@ -31,6 +32,7 @@ export type { AutomatedAlertsOptions, AutomatedAlertsStatus, AutomatedAlertsSumm
 export {
   ALERT_SEVERITIES,
   ALERT_STATUSES,
+  ALERT_TIERS,
   ALERT_TYPES,
   HIGH_MARKET_OPPORTUNITY_THRESHOLD,
 } from "./types";
@@ -40,6 +42,7 @@ export type {
   AlertEngineInput,
   AlertSeverity,
   AlertStatus,
+  AlertTier,
   AlertType,
   CountryOpportunityAlertEvidence,
   LifecycleAlertEvidence,

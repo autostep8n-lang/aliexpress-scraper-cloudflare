@@ -24,6 +24,12 @@ interface Override {
   path: string;
   status: number;
   body: unknown;
+  /**
+   * One-shot overrides are consumed by the first matching request (default).
+   * A persistent override keeps matching, which lets a test fail a request
+   * that an earlier pipeline step also issues.
+   */
+  persistent: boolean;
 }
 
 const TABLE_DEFAULTS: Record<string, Record<string, unknown>> = {
@@ -122,9 +128,13 @@ const TABLE_DEFAULTS: Record<string, Record<string, unknown>> = {
     computed_at: "2026-08-18T00:00:00.000Z",
   },
   alerts: {
-    severity: "high",
+    severity: "info",
     status: "active",
-    evidence: {},
+    summary: "",
+    country: null,
+    value: null,
+    tier: null,
+    inputs: {},
     first_seen_at: "2026-08-18T00:00:00.000Z",
     last_seen_at: "2026-08-18T00:00:00.000Z",
     resolved_at: null,
@@ -158,7 +168,7 @@ export interface MockPostgrest {
   requests: RecordedRequest[];
   store: Record<string, StoredRow[]>;
   seed(table: string, rows: StoredRow[]): void;
-  override(method: string, path: string, status: number, body: unknown): void;
+  override(method: string, path: string, status: number, body: unknown, options?: { persistent?: boolean }): void;
 }
 
 export function createMockPostgrest(): MockPostgrest {
@@ -189,7 +199,8 @@ export function createMockPostgrest(): MockPostgrest {
       (override) => override.method === method && url.pathname.includes(override.path),
     );
     if (overrideIndex !== -1) {
-      const [override] = overrides.splice(overrideIndex, 1);
+      const override = overrides[overrideIndex];
+      if (!override.persistent) overrides.splice(overrideIndex, 1);
       return new Response(JSON.stringify(override.body), {
         status: override.status,
         headers: { "content-type": "application/json" },
@@ -357,8 +368,8 @@ export function createMockPostgrest(): MockPostgrest {
     seed(table, rows) {
       store[table].push(...rows);
     },
-    override(method, path, status, body) {
-      overrides.push({ method, path, status, body });
+    override(method, path, status, body, options) {
+      overrides.push({ method, path, status, body, persistent: options?.persistent ?? false });
     },
   };
 }

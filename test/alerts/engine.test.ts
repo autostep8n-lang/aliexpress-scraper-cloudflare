@@ -6,6 +6,7 @@ import {
   evaluateLifecycle,
   evaluateMarketOpportunity,
   MARKET_OPPORTUNITY_SCORE_TYPE,
+  severityForAlertType,
 } from "../../src/alerts/engine";
 import type { AlertEngineInput } from "../../src/alerts/types";
 
@@ -33,10 +34,12 @@ describe("evaluateMarketOpportunity", () => {
     expect(alert).toMatchObject({
       productId: PRODUCT,
       alertType: "high_market_opportunity",
-      severity: "high",
+      severity: "critical",
       dedupKey: "market_opportunity:high",
+      value: 65,
+      tier: "high",
     });
-    expect(alert?.evidence).toMatchObject({ value: 65, total_weight: 0.25, threshold: 65 });
+    expect(alert?.inputs).toMatchObject({ total_weight: 0.25, threshold: 65 });
   });
 
   it("does not alert below the threshold", () => {
@@ -95,9 +98,12 @@ describe("evaluateCountryOpportunity", () => {
     expect(alert).toMatchObject({
       alertType: "high_country_opportunity",
       dedupKey: "country_opportunity:SA:high",
-      severity: "high",
+      severity: "warning",
+      country: "SA",
+      value: 72,
+      tier: "high",
     });
-    expect(alert?.message).toContain("SA");
+    expect(alert?.summary).toContain("SA");
   });
 
   it("requires a high tier", () => {

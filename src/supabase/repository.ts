@@ -113,10 +113,13 @@ export interface PersistedAlertRecord {
   alert_type: string;
   severity: string;
   status: string;
-  dedup_key: string;
+  dedup_key: string | null;
   title: string;
-  message: string;
-  evidence: Record<string, unknown>;
+  summary: string;
+  country: string | null;
+  value: number | null;
+  tier: string | null;
+  inputs: Record<string, unknown>;
   first_seen_at: string;
   last_seen_at: string;
   resolved_at: string | null;
@@ -136,8 +139,11 @@ export interface AlertRow {
   status: string;
   dedup_key: string;
   title: string;
-  message: string;
-  evidence: Record<string, unknown>;
+  summary: string;
+  country?: string | null;
+  value?: number | null;
+  tier?: string | null;
+  inputs: Record<string, unknown>;
   last_seen_at?: string;
   resolved_at?: string | null;
 }
@@ -197,7 +203,7 @@ const SCORE_SELECT =
   "id, product_id, product_source_id, score_type, value, min_value, max_value, version, inputs, computed_at";
 const SCORE_CONFLICT = "product_id,score_type,version";
 const ALERT_SELECT =
-  "id, product_id, alert_type, severity, status, dedup_key, title, message, evidence, first_seen_at, last_seen_at, resolved_at, created_at, updated_at";
+  "id, product_id, alert_type, severity, status, dedup_key, title, summary, country, value, tier, inputs, first_seen_at, last_seen_at, resolved_at, created_at, updated_at";
 const ALERT_CONFLICT = "product_id,alert_type,dedup_key";
 
 /**
@@ -1171,12 +1177,13 @@ export async function resolveAlerts(
 }
 
 /**
- * Read-only page of active alerts, most recently seen first (P7.31). The
- * public feed only ever reads; alerts are produced by the scheduled pipeline.
+ * Read-only page of alerts, most recently seen first (P7.31). The public feed
+ * only ever reads; alerts are produced by the scheduled pipeline. `status`
+ * defaults to `active` but a caller may explicitly request `resolved` rows.
  */
 export async function listAlerts(
   env: Env,
-  filter: { limit: number; offset: number },
+  filter: { limit: number; offset: number; status?: string },
 ): Promise<RepositoryResult<PersistedAlertRecord[]>> {
   const client = getSupabaseClient(env);
   if (!client) {
@@ -1187,7 +1194,7 @@ export async function listAlerts(
     const { data, error } = await client
       .from("alerts")
       .select(ALERT_SELECT)
-      .eq("status", "active")
+      .eq("status", filter.status ?? "active")
       .order("last_seen_at", { ascending: false })
       .range(filter.offset, filter.offset + filter.limit - 1);
     if (error || !Array.isArray(data)) {

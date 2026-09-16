@@ -8,15 +8,16 @@ export const DEFAULT_ALERT_LIMIT = 20;
 export const MAX_ALERT_LIMIT = 100;
 
 /**
- * GET /api/alerts — read-only active alert feed (P7.31).
+ * GET /api/alerts — read-only alert feed (P7.31).
  *
  * Query params:
  * - `limit` (optional)  page size (1..100); default 20
  * - `offset` (optional) zero-based offset; default 0
+ * - `status` (optional) `active` (default) or `resolved`
  *
  * Outcomes map to:
  * - 200 `{ status: "ok", alerts, page }`
- * - 400 `INVALID_LIMIT` / `INVALID_OFFSET`
+ * - 400 `INVALID_LIMIT` / `INVALID_OFFSET` / `INVALID_STATUS`
  * - 503 `SUPABASE_NOT_CONFIGURED` when Supabase bindings are missing
  * - 502 with the repository's typed code when the read fails
  *
@@ -45,7 +46,16 @@ export async function handleAlertList(request: Request, env: Env, requestId: str
     }
   }
 
-  const loaded = await loadAlertsPage(env, { limit, offset });
+  let status: string | undefined;
+  const statusRaw = params.get("status");
+  if (statusRaw !== null && statusRaw !== "") {
+    if (statusRaw !== "active" && statusRaw !== "resolved") {
+      return jsonError(400, "Invalid 'status' parameter", "INVALID_STATUS", requestId);
+    }
+    status = statusRaw;
+  }
+
+  const loaded = await loadAlertsPage(env, { limit, offset, status });
   if (loaded.status === "credentials_missing") {
     return jsonError(503, "Supabase is not configured", "SUPABASE_NOT_CONFIGURED", requestId);
   }

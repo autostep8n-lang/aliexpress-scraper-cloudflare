@@ -139,11 +139,27 @@ describe("Supabase migrations", () => {
       .filter((line) => !line.trim().startsWith("--"))
       .join("\n");
     expect(statements).toMatch(
-      /unique index alerts_product_type_dedup_key_uidx\s+on public\.alerts \(product_id, alert_type, dedup_key\)/i,
+      /unique index alerts_product_type_dedup_uidx\s+on public\.alerts \(product_id, alert_type, dedup_key\)/i,
     );
     expect(statements).not.toMatch(/where\s+[a-z_]+\s+is\s+not\s+null/i);
     expect(statements).not.toMatch(/drop\s+table/i);
     expect(statements).not.toMatch(/delete\s+from/i);
+  });
+
+  it("pins the alerts severity/country/tier domains to the approved v1 contract", () => {
+    const migration = readFileSync(join(migrationsDir, "20260817000018_alerts.sql"), "utf8");
+    expect(migration).toMatch(/severity text not null default 'info'/i);
+    expect(migration).toMatch(/severity in \('info', 'warning', 'critical'\)/i);
+    expect(migration).toMatch(/summary text not null/i);
+    expect(migration).toMatch(/country in \('SA', 'US', 'GB', 'DE', 'FR', 'ES', 'IT'\)/i);
+    expect(migration).toMatch(/tier in \('high', 'medium', 'low', 'unknown'\)/i);
+    expect(migration).toMatch(/value numeric/i);
+    expect(migration).toMatch(/inputs jsonb not null default '\{\}'::jsonb/i);
+    expect(migration).toMatch(/alerts_country_idx/i);
+    expect(migration).toMatch(/alerts_inputs_gin\s+on public\.alerts using gin \(inputs\)/i);
+    // The rejected draft schema must not resurface.
+    expect(migration).not.toMatch(/severity in \('high', 'medium', 'low'\)/i);
+    expect(migration).not.toMatch(/\bmessage text/i);
   });
 
   it("sets a shared updated_at trigger on every table that has updated_at", () => {

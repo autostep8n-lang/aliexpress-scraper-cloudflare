@@ -16,9 +16,18 @@ export const ALERT_STATUSES = ["active", "resolved"] as const;
 
 export type AlertStatus = (typeof ALERT_STATUSES)[number];
 
-export const ALERT_SEVERITIES = ["high", "medium", "low"] as const;
+/**
+ * Severity domain mirrored by the `alerts.severity` CHECK constraint. Ordered
+ * from least to most attention-worthy.
+ */
+export const ALERT_SEVERITIES = ["info", "warning", "critical"] as const;
 
 export type AlertSeverity = (typeof ALERT_SEVERITIES)[number];
+
+/** Opportunity tier domain mirrored by the `alerts.tier` CHECK constraint. */
+export const ALERT_TIERS = ["high", "medium", "low", "unknown"] as const;
+
+export type AlertTier = (typeof ALERT_TIERS)[number];
 
 /** Market opportunity tier threshold mirrored from `DEFAULT_OPPORTUNITY_THRESHOLDS.high`. */
 export const HIGH_MARKET_OPPORTUNITY_THRESHOLD = 65;
@@ -30,8 +39,16 @@ export interface AlertCandidate {
   severity: AlertSeverity;
   dedupKey: string;
   title: string;
-  message: string;
-  evidence: Record<string, unknown>;
+  /** Human-readable one-line explanation persisted as `alerts.summary`. */
+  summary: string;
+  /** Eligible v1 market for country alerts; absent for the other families. */
+  country?: string;
+  /** Numeric score carried by opportunity alerts. */
+  value?: number;
+  /** Opportunity tier; absent for lifecycle alerts. */
+  tier?: AlertTier;
+  /** Structured breakdown persisted as `alerts.inputs`. */
+  inputs: Record<string, unknown>;
 }
 
 /** Already-persisted market opportunity evidence (from the `scores` table). */
