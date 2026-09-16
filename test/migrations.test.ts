@@ -26,6 +26,7 @@ const EXPECTED_TABLES = [
   "youtube_signals",
   "instagram_signals",
   "country_opportunity_scores",
+  "alerts",
 ] as const;
 
 const EXPECTED_MIGRATIONS = [
@@ -46,6 +47,7 @@ const EXPECTED_MIGRATIONS = [
   "20260817000015_country_opportunity.sql",
   "20260817000016_products_dedup_key_unique.sql",
   "20260817000017_scores_unique.sql",
+  "20260817000018_alerts.sql",
 ] as const;
 
 describe("Supabase migrations", () => {
@@ -128,6 +130,20 @@ describe("Supabase migrations", () => {
     expect(statements).toMatch(/raise exception/i);
     expect(statements).not.toMatch(/delete\s+from/i);
     expect(statements).not.toMatch(/drop\s+table/i);
+  });
+
+  it("gives alerts a non-partial UNIQUE (product_id, alert_type, dedup_key) index for PostgREST ON CONFLICT", () => {
+    const migration = readFileSync(join(migrationsDir, "20260817000018_alerts.sql"), "utf8");
+    const statements = migration
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("--"))
+      .join("\n");
+    expect(statements).toMatch(
+      /unique index alerts_product_type_dedup_key_uidx\s+on public\.alerts \(product_id, alert_type, dedup_key\)/i,
+    );
+    expect(statements).not.toMatch(/where\s+[a-z_]+\s+is\s+not\s+null/i);
+    expect(statements).not.toMatch(/drop\s+table/i);
+    expect(statements).not.toMatch(/delete\s+from/i);
   });
 
   it("sets a shared updated_at trigger on every table that has updated_at", () => {

@@ -107,6 +107,41 @@ export interface PersistedScoreRecord {
   computed_at: string;
 }
 
+export interface PersistedAlertRecord {
+  id: string;
+  product_id: string;
+  alert_type: string;
+  severity: string;
+  status: string;
+  dedup_key: string;
+  title: string;
+  message: string;
+  evidence: Record<string, unknown>;
+  first_seen_at: string;
+  last_seen_at: string;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Upsert payload for `public.alerts`. `first_seen_at` is intentionally absent:
+ * omitting it preserves the original value on conflict while the database
+ * default applies on insert.
+ */
+export interface AlertRow {
+  product_id: string;
+  alert_type: string;
+  severity: string;
+  status: string;
+  dedup_key: string;
+  title: string;
+  message: string;
+  evidence: Record<string, unknown>;
+  last_seen_at?: string;
+  resolved_at?: string | null;
+}
+
 export interface ProductListFilter {
   limit: number;
   offset: number;
@@ -161,6 +196,9 @@ const COUNTRY_OPPORTUNITY_CONFLICT = "product_id,country,score_type";
 const SCORE_SELECT =
   "id, product_id, product_source_id, score_type, value, min_value, max_value, version, inputs, computed_at";
 const SCORE_CONFLICT = "product_id,score_type,version";
+const ALERT_SELECT =
+  "id, product_id, alert_type, severity, status, dedup_key, title, message, evidence, first_seen_at, last_seen_at, resolved_at, created_at, updated_at";
+const ALERT_CONFLICT = "product_id,alert_type,dedup_key";
 
 /**
  * Ingests one already-normalized Phase 1 `Product` into the P0.2 schema.
@@ -1000,6 +1038,168 @@ export async function upsertScores(
     };
   } catch (err) {
     return { status: "error", code: "scores_upsert_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Bulk-upserts alerts (P7.31).
+ *
+ * Deduplication is on `(product_id, alert_type, dedup_key)`: re-evaluating a
+ * still-true condition refreshes the row instead of appending duplicates.
+ * Callers pass `status: "active"` and `resolved_at: null` so a previously
+ * resolved condition that reappears is reactivated. `first_seen_at` is never
+ * sent, so the original first-observation timestamp survives the conflict.
+ * A row without a `product_id` or `dedup_key` cannot satisfy the NOT NULL /
+ * unique columns, so it is rejected as `invalid` rather than sent to
+ * PostgREST. Never throws.
+ */
+export async function upsertAlerts(
+  env: Env,
+  rows: AlertRow[],
+): Promise<RepositoryResult<PersistedAlertRecord[]>> {
+  if (rows.length === 0) {
+    return { status: "updated", data: [] };
+  }
+
+  const invalid = rows.find(
+    (row) =>
+      typeof row.product_id !== "string" ||
+      row.product_id.length === 0 ||
+      typeof row.dedup_key !== "string" ||
+      row.dedup_key.length === 0,
+  );
+  if (invalid) {
+    return { status: "invalid", message: "alert rows require a non-empty product_id and dedup_key" };
+  }
+
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    const { data, error, status } = await client
+      .from("alerts")
+      .upsert(rows, { onConflict: ALERT_CONFLICT })
+      .select(ALERT_SELECT);
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "alerts_upsert_failed",
+        message: errorMessage(error, "failed to upsert alerts"),
+      };
+    }
+    return {
+      status: status === 201 ? "created" : "updated",
+      data: data as PersistedAlertRecord[],
+    };
+  } catch (err) {
+    return { status: "error", code: "alerts_upsert_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Read-only active alerts for the given product ids (P7.31). Used by the
+ * pipeline to resolve alerts whose condition has disappeared. Never writes.
+ */
+export async function listActiveAlertsForProducts(
+  env: Env,
+  productIds: string[],
+): Promise<RepositoryResult<PersistedAlertRecord[]>> {
+  if (productIds.length === 0) {
+    return { status: "found", data: [] };
+  }
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    const { data, error } = await client
+      .from("alerts")
+      .select(ALERT_SELECT)
+      .in("product_id", productIds)
+      .eq("status", "active");
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "alert_list_failed",
+        message: errorMessage(error, "failed to list active alerts"),
+      };
+    }
+    return { status: "found", data: data as PersistedAlertRecord[] };
+  } catch (err) {
+    return { status: "error", code: "alert_list_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Marks alerts as resolved with an explicit timestamp (P7.31). Only used for
+ * alerts whose condition no longer holds; the evaluated-at time is passed in
+ * by the caller so resolution stays deterministic and testable. Never throws.
+ */
+export async function resolveAlerts(
+  env: Env,
+  alertIds: string[],
+  resolvedAt: string,
+): Promise<RepositoryResult<PersistedAlertRecord[]>> {
+  if (alertIds.length === 0) {
+    return { status: "updated", data: [] };
+  }
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    const { data, error } = await client
+      .from("alerts")
+      .update({ status: "resolved", resolved_at: resolvedAt })
+      .in("id", alertIds)
+      .select(ALERT_SELECT);
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "alerts_resolve_failed",
+        message: errorMessage(error, "failed to resolve alerts"),
+      };
+    }
+    return { status: "updated", data: data as PersistedAlertRecord[] };
+  } catch (err) {
+    return { status: "error", code: "alerts_resolve_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Read-only page of active alerts, most recently seen first (P7.31). The
+ * public feed only ever reads; alerts are produced by the scheduled pipeline.
+ */
+export async function listAlerts(
+  env: Env,
+  filter: { limit: number; offset: number },
+): Promise<RepositoryResult<PersistedAlertRecord[]>> {
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    const { data, error } = await client
+      .from("alerts")
+      .select(ALERT_SELECT)
+      .eq("status", "active")
+      .order("last_seen_at", { ascending: false })
+      .range(filter.offset, filter.offset + filter.limit - 1);
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "alert_list_failed",
+        message: errorMessage(error, "failed to list alerts"),
+      };
+    }
+    return { status: "found", data: data as PersistedAlertRecord[] };
+  } catch (err) {
+    return { status: "error", code: "alert_list_failed", message: toString(err) };
   }
 }
 

@@ -1,5 +1,6 @@
 import type { Env } from "../env";
 import { logError, logInfo } from "../logging";
+import { runAutomatedAlerts, type AutomatedAlertsSummary } from "../alerts/pipeline";
 import { ScraperError } from "../scrapers/types";
 import { runAutomatedScoring, type AutomatedScoringSummary } from "../scoring/pipeline";
 import { findDiscovery } from "./registry";
@@ -155,17 +156,22 @@ export async function runDailyDiscovery(
   return result;
 }
 
-/** Combined scheduled outcome: discovery, plus scoring only on discovery success. */
+/** Combined scheduled outcome: discovery, then scoring, then alerts on success. */
 export interface ScheduledAutomationResult {
   discovery: DailyDiscoveryRunResult;
   scoring: AutomatedScoringSummary | null;
+  alerts: AutomatedAlertsSummary | null;
 }
 
 /**
- * Scheduled automation (P7.29 + P7.30): run daily discovery first, then score
- * the persisted products. Scoring is skipped entirely when discovery did not
- * succeed, so a failed discovery is never scored against. A scoring failure
- * cannot erase the discovery that already succeeded.
+ * Scheduled automation (P7.29 + P7.30 + P7.31): run daily discovery first,
+ * score the persisted products, then evaluate alerts from the persisted scores
+ * and lifecycle state.
+ *
+ * Each step is gated on the previous one succeeding: a failed discovery is
+ * never scored or alerted against, a failed scoring run is never alerted
+ * against, and an alert failure never invalidates a discovery/scoring run that
+ * already succeeded.
  */
 export async function runScheduledAutomation(
   env: Env,
@@ -174,8 +180,12 @@ export async function runScheduledAutomation(
 ): Promise<ScheduledAutomationResult> {
   const discovery = await runDailyDiscovery(env, ctx, scheduled);
   if (discovery.status !== "ok") {
-    return { discovery, scoring: null };
+    return { discovery, scoring: null, alerts: null };
   }
   const scoring = await runAutomatedScoring(env);
-  return { discovery, scoring };
+  if (scoring.status !== "ok") {
+    return { discovery, scoring, alerts: null };
+  }
+  const alerts = await runAutomatedAlerts(env);
+  return { discovery, scoring, alerts };
 }

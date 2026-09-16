@@ -184,7 +184,7 @@ describe("Worker scheduled handler", () => {
   });
 });
 
-describe("runScheduledAutomation (P7.29 + P7.30)", () => {
+describe("runScheduledAutomation (P7.29 + P7.30 + P7.31)", () => {
   let server: MockPostgrest;
 
   afterEach(() => {
@@ -192,7 +192,7 @@ describe("runScheduledAutomation (P7.29 + P7.30)", () => {
     vi.restoreAllMocks();
   });
 
-  it("runs automated scoring after a successful discovery and logs a scoring summary", async () => {
+  it("runs automated scoring and alerts after a successful discovery and logs both summaries", async () => {
     server = createMockPostgrest();
     vi.stubGlobal("fetch", compositeFetch(server, searchPageHtml([searchItem("111")])));
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -202,6 +202,8 @@ describe("runScheduledAutomation (P7.29 + P7.30)", () => {
     expect(result.discovery.status).toBe("ok");
     expect(result.scoring).not.toBeNull();
     expect(result.scoring).toMatchObject({ status: "ok" });
+    expect(result.alerts).not.toBeNull();
+    expect(result.alerts).toMatchObject({ status: "ok" });
 
     const scoringLog = logSpy.mock.calls
       .map((call) => JSON.parse(String(call[0])) as Record<string, unknown>)
@@ -216,9 +218,23 @@ describe("runScheduledAutomation (P7.29 + P7.30)", () => {
       persisted: expect.any(Number),
       durationMs: expect.any(Number),
     });
+
+    const alertsLog = logSpy.mock.calls
+      .map((call) => JSON.parse(String(call[0])) as Record<string, unknown>)
+      .find((entry) => entry.event === "scheduled.alerts");
+    expect(alertsLog).toBeDefined();
+    expect(alertsLog).toMatchObject({
+      level: "info",
+      total: expect.any(Number),
+      evaluated: expect.any(Number),
+      created: expect.any(Number),
+      resolved: expect.any(Number),
+      failed: expect.any(Number),
+      durationMs: expect.any(Number),
+    });
   });
 
-  it("does not run scoring when discovery fails", async () => {
+  it("does not run scoring or alerts when discovery fails", async () => {
     server = createMockPostgrest();
     vi.stubGlobal("fetch", compositeFetch(server, "<html><body>Captcha required to continue.</body></html>"));
 
@@ -226,6 +242,7 @@ describe("runScheduledAutomation (P7.29 + P7.30)", () => {
 
     expect(result.discovery.status).toBe("error");
     expect(result.scoring).toBeNull();
+    expect(result.alerts).toBeNull();
     expect(server.store.products).toHaveLength(0);
   });
 
@@ -241,9 +258,56 @@ describe("runScheduledAutomation (P7.29 + P7.30)", () => {
     expect(server.store.product_sources).toHaveLength(1);
     expect(result.scoring).not.toBeNull();
     expect(result.scoring?.failed).toBeGreaterThanOrEqual(1);
+    expect(result.alerts).not.toBeNull();
+    expect(result.alerts?.status).toBe("ok");
   });
 
-  it("skips both discovery and scoring when Supabase is not configured", async () => {
+  it("does not run alerts when scoring hard-fails", async () => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", compositeFetch(server, searchPageHtml([searchItem("111")])));
+    server.override("GET", "/rest/v1/products", 500, { message: "storage down" });
+
+    const result = await runScheduledAutomation(configuredEnv(), ctx, scheduledController());
+
+    expect(result.discovery.status).toBe("ok");
+    expect(result.scoring?.status).toBe("error");
+    expect(result.alerts).toBeNull();
+  });
+
+  it("never erases a successful scoring run when alerts fail", async () => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", compositeFetch(server, searchPageHtml([searchItem("111")])));
+    server.seed("products", [
+      {
+        id: "33333333-3333-3333-3333-333333333333",
+        title: "Seeded",
+        lifecycle_status: "active",
+        last_seen_at: "2026-08-01T00:00:00.000Z",
+      },
+    ]);
+    server.seed("scores", [
+      {
+        id: "seeded-score",
+        product_id: "33333333-3333-3333-3333-333333333333",
+        score_type: "market_opportunity",
+        value: 90,
+        min_value: 0,
+        max_value: 100,
+        version: 1,
+        computed_at: "2026-08-01T00:00:00.000Z",
+        inputs: { signals: [{ key: "demand_volume", weight: 0.25, present: true }] },
+      },
+    ]);
+    server.override("POST", "/rest/v1/alerts", 400, { message: "write rejected" });
+
+    const result = await runScheduledAutomation(configuredEnv(), ctx, scheduledController());
+
+    expect(result.scoring?.status).toBe("ok");
+    expect(result.alerts?.status).toBe("ok");
+    expect(result.alerts?.failed).toBeGreaterThanOrEqual(1);
+  });
+
+  it("skips discovery, scoring and alerts when Supabase is not configured", async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 
@@ -251,6 +315,7 @@ describe("runScheduledAutomation (P7.29 + P7.30)", () => {
 
     expect(result.discovery.status).toBe("skipped");
     expect(result.scoring).toBeNull();
+    expect(result.alerts).toBeNull();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

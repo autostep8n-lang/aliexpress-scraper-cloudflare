@@ -1,4 +1,5 @@
 import { handleDashboard, handleOpportunitiesDashboard, handleProductDetailDashboard } from "./dashboard";
+import { handleAlertList } from "./api/alerts";
 import { handleDiscover } from "./api/discover";
 import { handleGoogleTrends } from "./api/google-trends";
 import { handleInstagram, handleInstagramOAuthCallback, handleInstagramOAuthStart } from "./api/instagram";
@@ -139,6 +140,12 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
       const denied = guardGet(request, requestId);
       if (denied) return denied;
       return handleOpportunityList(request, env, requestId);
+    }
+
+    case "/api/alerts": {
+      const denied = guardGet(request, requestId);
+      if (denied) return denied;
+      return handleAlertList(request, env, requestId);
     }
 
     case "/opportunities": {
