@@ -22,6 +22,14 @@ function marketInput(overrides: Partial<AlertEngineInput> = {}): AlertEngineInpu
   };
 }
 
+describe("severityForAlertType", () => {
+  it("maps each alert family to its approved severity", () => {
+    expect(severityForAlertType("high_market_opportunity")).toBe("critical");
+    expect(severityForAlertType("high_country_opportunity")).toBe("warning");
+    expect(severityForAlertType("lifecycle_review")).toBe("info");
+  });
+});
+
 describe("evaluateMarketOpportunity", () => {
   it("alerts at or above the high threshold with real weight", () => {
     const alert = evaluateMarketOpportunity({
@@ -167,7 +175,7 @@ describe("evaluateCountryOpportunity", () => {
 describe("evaluateLifecycle", () => {
   it("emits review alerts for inactive and archived", () => {
     expect(evaluateLifecycle({ productId: PRODUCT, lifecycleStatus: "inactive" })).toMatchObject([
-      { alertType: "lifecycle_review", dedupKey: "lifecycle:inactive", severity: "medium" },
+      { alertType: "lifecycle_review", dedupKey: "lifecycle:inactive", severity: "info" },
     ]);
     expect(evaluateLifecycle({ productId: PRODUCT, lifecycleStatus: "archived" })).toMatchObject([
       { alertType: "lifecycle_review", dedupKey: "lifecycle:archived" },
@@ -202,8 +210,8 @@ describe("evaluateAlerts", () => {
 
     expect(alerts.map((alert) => alert.dedupKey)).toEqual([
       "country_opportunity:SA:high",
-      "lifecycle:archived",
       "market_opportunity:high",
+      "lifecycle:archived",
     ]);
   });
 
@@ -261,7 +269,7 @@ describe("evaluateAlerts", () => {
 
     expect(forward).toEqual(reverse);
     expect(forward).toHaveLength(1);
-    expect((forward[0].evidence as { value: number }).value).toBe(95);
+    expect(forward[0].value).toBe(95);
   });
 
   it("sorts by product, then type, then dedup key", () => {
@@ -274,8 +282,8 @@ describe("evaluateAlerts", () => {
     });
     expect(alerts.map((alert) => `${alert.productId}:${alert.dedupKey}`)).toEqual([
       `${PRODUCT}:market_opportunity:high`,
-      `${OTHER}:lifecycle:archived`,
       `${OTHER}:market_opportunity:high`,
+      `${OTHER}:lifecycle:archived`,
     ]);
   });
 

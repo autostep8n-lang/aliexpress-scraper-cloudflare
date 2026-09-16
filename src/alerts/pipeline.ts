@@ -267,7 +267,19 @@ export function countryOpportunityEvidence(
   return evidence;
 }
 
-/** Lifecycle evidence from the persisted `products.lifecycle_status` column. */
+/**
+ * Lifecycle evidence from the persisted `products.lifecycle_status` column.
+ *
+ * Limitation (P7.31): the existing pipeline does not currently produce or
+ * persist lifecycle transitions. The P1.5 lifecycle engine under `src/lifecycle`
+ * is a pure classifier that is not wired into discovery, scoring or any writer,
+ * so persisted products stay at their ingestion default (`discovered`) and never
+ * reach the review-worthy terminal states (`inactive` / `archived`). The alert
+ * engine therefore keeps `lifecycle_review` alerts at zero in production rather
+ * than inventing transitions just to feed the feed. The rule is still unit
+ * tested against `inactive` / `archived` so it starts working the moment a real
+ * lifecycle writer exists; no new lifecycle behavior is introduced here.
+ */
 export function lifecycleEvidence(products: readonly PersistedProductRecord[]): LifecycleAlertEvidence[] {
   return products.map((product) => ({
     productId: product.id,

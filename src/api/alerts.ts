@@ -5,13 +5,13 @@ import { jsonError, jsonOk } from "../utils/http";
 /** Default page size for the alerts feed. */
 export const DEFAULT_ALERT_LIMIT = 20;
 /** Upper bound on `limit` so a single request cannot stream the whole feed. */
-export const MAX_ALERT_LIMIT = 100;
+export const MAX_ALERT_LIMIT = 50;
 
 /**
  * GET /api/alerts — read-only alert feed (P7.31).
  *
  * Query params:
- * - `limit` (optional)  page size (1..100); default 20
+ * - `limit` (optional)  page size (1..50); default 20
  * - `offset` (optional) zero-based offset; default 0
  * - `status` (optional) `active` (default) or `resolved`
  *

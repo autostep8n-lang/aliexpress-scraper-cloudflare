@@ -22,12 +22,12 @@ function alertRow(id: string, lastSeenAt: string, overrides: Record<string, unkn
     id,
     product_id: PRODUCT_ID,
     alert_type: "high_market_opportunity",
-    severity: "high",
+    severity: "critical",
     status: "active",
     dedup_key: `market_opportunity:high:${id}`,
     title: `Alert ${id}`,
-    message: `Alert ${id}`,
-    evidence: {},
+    summary: `Alert ${id}`,
+    inputs: {},
     last_seen_at: lastSeenAt,
     ...overrides,
   };
@@ -94,6 +94,28 @@ describe("GET /api/alerts", () => {
       expect(response.status).toBe(400);
       expect(((await response.json()) as { code: string }).code).toBe("INVALID_OFFSET");
     }
+  });
+
+  it("returns 400 INVALID_STATUS for an unknown status", async () => {
+    for (const query of ["status=bogus", "status=ARCHIVED", "status=pending"]) {
+      const response = await get(`/api/alerts?${query}`);
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { code: string }).code).toBe("INVALID_STATUS");
+    }
+  });
+
+  it("filters to resolved alerts when status=resolved", async () => {
+    server.seed("alerts", [
+      alertRow("active", "2026-08-19T00:00:00.000Z"),
+      alertRow("resolved", "2026-08-20T00:00:00.000Z", { status: "resolved" }),
+    ]);
+
+    const response = await get("/api/alerts?status=resolved");
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { alerts: Array<{ id: string }>; page: { count: number } };
+    expect(body.alerts.map((alert) => alert.id)).toEqual(["resolved"]);
+    expect(body.page.count).toBe(1);
   });
 
   it("caps limit at the maximum page size", async () => {

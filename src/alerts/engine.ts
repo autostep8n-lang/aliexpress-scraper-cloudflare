@@ -46,9 +46,9 @@ export function candidateKey(productId: string, alertType: string, dedupKey: str
   return `${productId}\u0000${alertType}\u0000${dedupKey}`;
 }
 
-/** Stable identity of a persisted alert row. */
-export function alertRowKey(alert: { product_id: string; alert_type: string; dedup_key: string }): string {
-  return candidateKey(alert.product_id, alert.alert_type, alert.dedup_key);
+/** Stable identity of a persisted alert row. Rows without a dedup key can never match a candidate. */
+export function alertRowKey(alert: { product_id: string; alert_type: string; dedup_key: string | null }): string {
+  return candidateKey(alert.product_id, alert.alert_type, alert.dedup_key ?? "");
 }
 
 /**

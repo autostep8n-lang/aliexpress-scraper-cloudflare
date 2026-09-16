@@ -84,7 +84,15 @@
   - `decision_opportunity` (P5.24) and the analyst explanation (P5.25) remain on-read.
   - Bounded paging (50 per batch, 200 products max) reconstructs demand from persisted observations; competition is skipped with an explicit reason (discovery collects no competitor data) instead of writing a fabricated value.
   - Focused pipeline, repository, migration and scheduled-integration tests; no new secrets or providers. Not deployed.
-- **Next task: P7.31 — Alerts**
+- **P7.31 — Alerts: DONE**
+  - Pure deterministic alert engine under `src/alerts/` (`high_market_opportunity`, `high_country_opportunity`, `lifecycle_review`) with no I/O, wall-clock or randomness; candidates are ordered by `productId -> alertType -> dedupKey` and deduplicated on `(product_id, alert_type, dedup_key)`.
+  - Market alerts require `value >= 65` and `total_weight > 0`; country alerts require tier `high` + an eligible v1 country + `score_type = country_opportunity`; invalid / NaN evidence is skipped, never coerced.
+  - Persistence uses the approved schema in migration `20260817000018_alerts.sql` (`severity in info|warning|critical`, `summary`, `inputs`, nullable `country` / `value` / `tier`, unique `(product_id, alert_type, dedup_key)`, updated_at trigger, RLS enabled, non-destructive); the mixed/legacy `message`/`evidence` contract was removed.
+  - Scheduled pipeline preserves `discovery -> scoring -> alerts` with failure isolation: a discovery/scoring failure yields no alerts run, an alert failure never erases a successful discovery/scoring result, and active alerts resolve and reactivate deterministically through an injected clock seam.
+  - Read-only `GET /api/alerts?limit&offset&status` (default `limit=20`, `offset=0`; max 50; invalid limit/offset/status -> 400; Supabase unavailable -> 503; repository failure -> 502); no mutation endpoint.
+  - Lifecycle limitation: the existing pipeline never produces/persists lifecycle transitions, so products stay at the ingestion default and `lifecycle_review` alerts remain safely at zero in production; the rule stays unit-tested against `inactive` / `archived` and no new lifecycle behavior was introduced.
+  - Focused engine/pipeline/repository/API/scheduled/migration tests; not deployed (migration 18 not applied to production).
+- **Next task: P7.32 — Reports**
 
 ## P0 — Foundation
 
@@ -155,7 +163,7 @@
 |---|---|---|---|
 | 29 | Daily Product Discovery | DONE | Cloudflare scheduled handler with daily Cron Trigger at 0 0 * * *; reuses existing TikTok Shop discovery, normalizeProduct and upsertProduct flow; scheduled defaults are query "earbuds", no region/category, limit 20; idempotent persistence; focused tests and error handling; no new secrets/providers. |
 | 30 | Automated Scoring Pipeline | DONE | Chained into the existing daily cron after discovery; persists `competition` / `market_opportunity` via existing P1.10 engine keyed on `(product_id, score_type, version)`; P5.24/P5.25 stay on-read; bounded paging; skips competition when no real input exists. |
-| 31 | Alerts | TODO | Not started |
+| 31 | Alerts | DONE | Deterministic engine (`high_market_opportunity` / `high_country_opportunity` / `lifecycle_review`) persisted to `alerts` via migration `20260817000018`; scheduled after scoring with failure isolation; read-only `GET /api/alerts` (default limit 20, max 50). Lifecycle limitation: pipeline never persists lifecycle transitions, so `lifecycle_review` stays at zero in production. Not deployed. |
 | 32 | Reports | TODO | Not started |
 
 ## P8 — Commerce & Advanced

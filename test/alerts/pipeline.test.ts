@@ -82,12 +82,12 @@ function seededAlert(productId: string, alertType: string, dedupKey: string, fir
     id: `alert-${productId}-${dedupKey}`,
     product_id: productId,
     alert_type: alertType,
-    severity: "high",
+    severity: "critical",
     status: "active",
     dedup_key: dedupKey,
     title: "Seeded",
-    message: "Seeded alert",
-    evidence: {},
+    summary: "Seeded alert",
+    inputs: {},
     first_seen_at: firstSeenAt,
     last_seen_at: firstSeenAt,
     resolved_at: null,
@@ -198,6 +198,19 @@ describe("runAutomatedAlerts", () => {
 
     expect(result.created).toBe(0);
     expect(server.store.alerts).toHaveLength(0);
+  });
+
+  it("keeps lifecycle alerts at zero for the only lifecycle state the pipeline persists", async () => {
+    // The existing pipeline never produces or persists lifecycle transitions,
+    // so products stay at the ingestion default and no lifecycle_review alert
+    // can fire. This documents the P7.31 lifecycle limitation.
+    server.seed("products", [product(PRODUCT, "discovered")]);
+    server.seed("scores", [marketScore(PRODUCT, 80)]);
+
+    const result = await runAutomatedAlerts(configuredEnv());
+
+    expect(result.status).toBe("ok");
+    expect(server.store.alerts.map((row) => row.alert_type)).toEqual(["high_market_opportunity"]);
   });
 
   it("counts a repository write failure without aborting the run", async () => {
@@ -325,24 +338,24 @@ describe("loadAlertsPage", () => {
         id: "a",
         product_id: PRODUCT,
         alert_type: "high_market_opportunity",
-        severity: "high",
+        severity: "critical",
         status: "active",
         dedup_key: "market_opportunity:high",
         title: "A",
-        message: "A",
-        evidence: {},
+        summary: "A",
+        inputs: {},
         last_seen_at: "2026-08-18T10:00:00.000Z",
       },
       {
         id: "b",
         product_id: PRODUCT,
         alert_type: "lifecycle_review",
-        severity: "medium",
+        severity: "info",
         status: "resolved",
         dedup_key: "lifecycle:inactive",
         title: "B",
-        message: "B",
-        evidence: {},
+        summary: "B",
+        inputs: {},
         last_seen_at: "2026-08-19T10:00:00.000Z",
       },
     ]);

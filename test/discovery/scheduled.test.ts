@@ -265,7 +265,10 @@ describe("runScheduledAutomation (P7.29 + P7.30 + P7.31)", () => {
   it("does not run alerts when scoring hard-fails", async () => {
     server = createMockPostgrest();
     vi.stubGlobal("fetch", compositeFetch(server, searchPageHtml([searchItem("111")])));
-    server.override("GET", "/rest/v1/products", 500, { message: "storage down" });
+    // Persistent: discovery's product matching also issues a GET on
+    // /rest/v1/products (and tolerates its failure), so a one-shot override
+    // would be consumed by discovery and never reach scoring.
+    server.override("GET", "/rest/v1/products", 500, { message: "storage down" }, { persistent: true });
 
     const result = await runScheduledAutomation(configuredEnv(), ctx, scheduledController());
 
