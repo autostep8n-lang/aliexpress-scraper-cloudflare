@@ -92,7 +92,14 @@
   - Read-only `GET /api/alerts?limit&offset&status` (default `limit=20`, `offset=0`; max 50; invalid limit/offset/status -> 400; Supabase unavailable -> 503; repository failure -> 502); no mutation endpoint.
   - Lifecycle limitation: the existing pipeline never produces/persists lifecycle transitions, so products stay at the ingestion default and `lifecycle_review` alerts remain safely at zero in production; the rule stays unit-tested against `inactive` / `archived` and no new lifecycle behavior was introduced.
   - Focused engine/pipeline/repository/API/scheduled/migration tests; not deployed (migration 18 not applied to production).
-- **Next task: P7.32 — Reports**
+- **P7.32 — Reports: DONE**
+  - Persisted `daily_digest` reports in `public.reports` via migration `20260817000019_reports.sql` (`report_type in ('daily_digest')`, unique `(report_type, dedup_key)`, `period_start` / `period_end` UTC-day bounds, `payload jsonb`, updated_at trigger, RLS enabled, no public policies, non-destructive).
+  - UTC daily snapshot keyed by calendar day (`dedup_key = YYYY-MM-DD`); same-day regeneration upserts in place and never appends duplicates; no retention policy.
+  - Digest is generated from the existing `ScheduledAutomationResult` after `runScheduledAutomation`; P7.29/P7.30/P7.31 discovery → scoring → alerts sequencing is unchanged; a report persistence failure cannot alter upstream outcomes and never throws from the scheduled handler.
+  - Failed, partial and skipped automation steps are represented in both the human-readable `summary` and structured `payload`.
+  - Read-only `GET /api/reports?limit&offset&type` and `GET /api/reports/:id` (default `limit=20`, max 50; invalid limit/offset/type -> 400; Supabase unavailable -> 503; repository failure -> 502; malformed UUID -> 404 without querying the database); no mutation endpoint.
+  - Focused digest/pipeline/repository/API/scheduled/migration tests and QA completed; not deployed (migration 19 not applied to production).
+- **Next task: P8.33 — Shopify Integration**
 
 ## P0 — Foundation
 
@@ -164,7 +171,7 @@
 | 29 | Daily Product Discovery | DONE | Cloudflare scheduled handler with daily Cron Trigger at 0 0 * * *; reuses existing TikTok Shop discovery, normalizeProduct and upsertProduct flow; scheduled defaults are query "earbuds", no region/category, limit 20; idempotent persistence; focused tests and error handling; no new secrets/providers. |
 | 30 | Automated Scoring Pipeline | DONE | Chained into the existing daily cron after discovery; persists `competition` / `market_opportunity` via existing P1.10 engine keyed on `(product_id, score_type, version)`; P5.24/P5.25 stay on-read; bounded paging; skips competition when no real input exists. |
 | 31 | Alerts | DONE | Deterministic engine (`high_market_opportunity` / `high_country_opportunity` / `lifecycle_review`) persisted to `alerts` via migration `20260817000018`; scheduled after scoring with failure isolation; read-only `GET /api/alerts` (default limit 20, max 50). Lifecycle limitation: pipeline never persists lifecycle transitions, so `lifecycle_review` stays at zero in production. Not deployed. |
-| 32 | Reports | TODO | Not started |
+| 32 | Reports | DONE | Persisted `daily_digest` via migration `20260817000019_reports.sql`; UTC daily snapshot/dedup on `(report_type, dedup_key)`; generated from `ScheduledAutomationResult` after the existing automation pipeline with failure isolation; read-only `GET /api/reports` and `GET /api/reports/:id` (default limit 20, max 50). Failed/partial/skipped runs represented in payload. Not deployed. |
 
 ## P8 — Commerce & Advanced
 
