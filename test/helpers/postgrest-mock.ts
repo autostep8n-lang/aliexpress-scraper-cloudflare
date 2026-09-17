@@ -141,6 +141,17 @@ const TABLE_DEFAULTS: Record<string, Record<string, unknown>> = {
     created_at: "2026-08-18T00:00:00.000Z",
     updated_at: "2026-08-18T00:00:00.000Z",
   },
+  reports: {
+    report_type: "daily_digest",
+    title: "",
+    summary: "",
+    period_start: "2026-08-18T00:00:00.000Z",
+    period_end: "2026-08-19T00:00:00.000Z",
+    payload: {},
+    generated_at: "2026-08-18T00:00:00.000Z",
+    created_at: "2026-08-18T00:00:00.000Z",
+    updated_at: "2026-08-18T00:00:00.000Z",
+  },
 };
 
 let idCounter = 0;
@@ -184,6 +195,7 @@ export function createMockPostgrest(): MockPostgrest {
     country_opportunity_scores: [],
     scores: [],
     alerts: [],
+    reports: [],
   };
   const requests: RecordedRequest[] = [];
   const overrides: Override[] = [];

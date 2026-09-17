@@ -182,6 +182,32 @@ describe("Worker scheduled handler", () => {
     expect(server.store.products).toHaveLength(1);
     expect(server.store.product_sources.map((row) => row.external_id)).toEqual(["111"]);
   });
+
+  it("persists a daily digest after the automation run", async () => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", compositeFetch(server, searchPageHtml([searchItem("111")])));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await worker.scheduled!(scheduledController(), configuredEnv(), ctx);
+
+    expect(server.store.reports).toHaveLength(1);
+    expect(server.store.reports[0]).toMatchObject({ report_type: "daily_digest" });
+    expect(server.store.reports[0].dedup_key).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("never throws from the scheduled export when report persistence fails", async () => {
+    server = createMockPostgrest();
+    vi.stubGlobal("fetch", compositeFetch(server, searchPageHtml([searchItem("111")])));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    server.override("POST", "/rest/v1/reports", 500, { message: "report storage down" });
+
+    await expect(worker.scheduled!(scheduledController(), configuredEnv(), ctx)).resolves.toBeUndefined();
+
+    // Discovery still succeeded and was persisted despite the report failure.
+    expect(server.store.products).toHaveLength(1);
+    expect(server.store.reports).toHaveLength(0);
+  });
 });
 
 describe("runScheduledAutomation (P7.29 + P7.30 + P7.31)", () => {

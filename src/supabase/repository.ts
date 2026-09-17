@@ -148,6 +148,36 @@ export interface AlertRow {
   resolved_at?: string | null;
 }
 
+export interface PersistedReportRecord {
+  id: string;
+  report_type: string;
+  dedup_key: string;
+  title: string;
+  summary: string;
+  period_start: string;
+  period_end: string;
+  payload: Record<string, unknown>;
+  generated_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Upsert payload for `public.reports`. `created_at` is intentionally absent:
+ * omitting it preserves the original first-write timestamp on conflict while
+ * the database default applies on insert.
+ */
+export interface ReportRow {
+  report_type: string;
+  dedup_key: string;
+  title: string;
+  summary: string;
+  period_start: string;
+  period_end: string;
+  payload: Record<string, unknown>;
+  generated_at?: string;
+}
+
 export interface ProductListFilter {
   limit: number;
   offset: number;
@@ -205,6 +235,11 @@ const SCORE_CONFLICT = "product_id,score_type,version";
 const ALERT_SELECT =
   "id, product_id, alert_type, severity, status, dedup_key, title, summary, country, value, tier, inputs, first_seen_at, last_seen_at, resolved_at, created_at, updated_at";
 const ALERT_CONFLICT = "product_id,alert_type,dedup_key";
+const REPORT_SELECT =
+  "id, report_type, dedup_key, title, summary, period_start, period_end, payload, generated_at, created_at, updated_at";
+const REPORT_CONFLICT = "report_type,dedup_key";
+const REPORT_ID_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Ingests one already-normalized Phase 1 `Product` into the P0.2 schema.
@@ -1207,6 +1242,131 @@ export async function listAlerts(
     return { status: "found", data: data as PersistedAlertRecord[] };
   } catch (err) {
     return { status: "error", code: "alert_list_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Bulk-upserts reports (P7.32).
+ *
+ * Deduplication is on `(report_type, dedup_key)`: regenerating the same period
+ * refreshes the row instead of appending duplicates. `created_at` is never sent,
+ * so the original first-write timestamp survives the conflict. A row without a
+ * `report_type` or `dedup_key` cannot satisfy the NOT NULL / unique columns, so
+ * it is rejected as `invalid` rather than sent to PostgREST. Never throws.
+ */
+export async function upsertReports(
+  env: Env,
+  rows: ReportRow[],
+): Promise<RepositoryResult<PersistedReportRecord[]>> {
+  if (rows.length === 0) {
+    return { status: "updated", data: [] };
+  }
+
+  const invalid = rows.find(
+    (row) =>
+      typeof row.report_type !== "string" ||
+      row.report_type.length === 0 ||
+      typeof row.dedup_key !== "string" ||
+      row.dedup_key.length === 0,
+  );
+  if (invalid) {
+    return { status: "invalid", message: "report rows require a non-empty report_type and dedup_key" };
+  }
+
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    const { data, error, status } = await client
+      .from("reports")
+      .upsert(rows, { onConflict: REPORT_CONFLICT })
+      .select(REPORT_SELECT);
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "reports_upsert_failed",
+        message: errorMessage(error, "failed to upsert reports"),
+      };
+    }
+    return {
+      status: status === 201 ? "created" : "updated",
+      data: data as PersistedReportRecord[],
+    };
+  } catch (err) {
+    return { status: "error", code: "reports_upsert_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Read-only page of reports, most recently generated first (P7.32). The public
+ * feed only ever reads; reports are produced by the scheduled pipeline. An
+ * optional `reportType` narrows the archive to a single family. Never writes.
+ */
+export async function listReports(
+  env: Env,
+  filter: { limit: number; offset: number; reportType?: string },
+): Promise<RepositoryResult<PersistedReportRecord[]>> {
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    let query = client.from("reports").select(REPORT_SELECT);
+    if (filter.reportType) {
+      query = query.eq("report_type", filter.reportType);
+    }
+    const { data, error } = await query
+      .order("generated_at", { ascending: false })
+      .range(filter.offset, filter.offset + filter.limit - 1);
+    if (error || !Array.isArray(data)) {
+      return {
+        status: "error",
+        code: "report_list_failed",
+        message: errorMessage(error, "failed to list reports"),
+      };
+    }
+    return { status: "found", data: data as PersistedReportRecord[] };
+  } catch (err) {
+    return { status: "error", code: "report_list_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Read-only report lookup by primary key (P7.32). Never writes. A malformed id
+ * is rejected as `not_found` before any client/network work, mirroring
+ * `getProductById`.
+ */
+export async function getReportById(
+  env: Env,
+  reportId: string,
+): Promise<RepositoryResult<PersistedReportRecord>> {
+  if (!REPORT_ID_UUID.test(reportId)) {
+    return { status: "not_found" };
+  }
+
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    const { data, error } = await client.from("reports").select(REPORT_SELECT).eq("id", reportId).maybeSingle();
+    if (error) {
+      return {
+        status: "error",
+        code: "report_lookup_failed",
+        message: errorMessage(error, "failed to look up report"),
+      };
+    }
+    if (!data) {
+      return { status: "not_found" };
+    }
+    return { status: "found", data: data as PersistedReportRecord };
+  } catch (err) {
+    return { status: "error", code: "report_lookup_failed", message: toString(err) };
   }
 }
 

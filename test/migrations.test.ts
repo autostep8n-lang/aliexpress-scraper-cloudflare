@@ -27,6 +27,7 @@ const EXPECTED_TABLES = [
   "instagram_signals",
   "country_opportunity_scores",
   "alerts",
+  "reports",
 ] as const;
 
 const EXPECTED_MIGRATIONS = [
@@ -48,6 +49,7 @@ const EXPECTED_MIGRATIONS = [
   "20260817000016_products_dedup_key_unique.sql",
   "20260817000017_scores_unique.sql",
   "20260817000018_alerts.sql",
+  "20260817000019_reports.sql",
 ] as const;
 
 describe("Supabase migrations", () => {
@@ -160,6 +162,34 @@ describe("Supabase migrations", () => {
     // The rejected draft schema must not resurface.
     expect(migration).not.toMatch(/severity in \('high', 'medium', 'low'\)/i);
     expect(migration).not.toMatch(/\bmessage text/i);
+  });
+
+  it("gives reports a non-partial UNIQUE (report_type, dedup_key) index for PostgREST ON CONFLICT", () => {
+    const migration = readFileSync(join(migrationsDir, "20260817000019_reports.sql"), "utf8");
+    const statements = migration
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("--"))
+      .join("\n");
+    expect(statements).toMatch(
+      /unique index reports_type_dedup_uidx\s+on public\.reports \(report_type, dedup_key\)/i,
+    );
+    expect(statements).not.toMatch(/where\s+[a-z_]+\s+is\s+not\s+null/i);
+    expect(statements).not.toMatch(/drop\s+table/i);
+    expect(statements).not.toMatch(/delete\s+from/i);
+  });
+
+  it("pins the reports type domain and required digest columns to the approved v1 contract", () => {
+    const migration = readFileSync(join(migrationsDir, "20260817000019_reports.sql"), "utf8");
+    expect(migration).toMatch(/report_type in \('daily_digest'\)/i);
+    expect(migration).toMatch(/dedup_key text not null/i);
+    expect(migration).toMatch(/title text not null/i);
+    expect(migration).toMatch(/summary text not null/i);
+    expect(migration).toMatch(/period_start timestamptz not null/i);
+    expect(migration).toMatch(/period_end timestamptz not null/i);
+    expect(migration).toMatch(/payload jsonb not null default '\{\}'::jsonb/i);
+    expect(migration).toMatch(/generated_at timestamptz not null default now\(\)/i);
+    expect(migration).toMatch(/reports_generated_at_idx/i);
+    expect(migration).toMatch(/reports_payload_gin\s+on public\.reports using gin \(payload\)/i);
   });
 
   it("sets a shared updated_at trigger on every table that has updated_at", () => {

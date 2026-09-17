@@ -1,5 +1,6 @@
 import { handleDashboard, handleOpportunitiesDashboard, handleProductDetailDashboard } from "./dashboard";
 import { handleAlertList } from "./api/alerts";
+import { handleReportDetail, handleReportList } from "./api/reports";
 import { handleDiscover } from "./api/discover";
 import { handleGoogleTrends } from "./api/google-trends";
 import { handleInstagram, handleInstagramOAuthCallback, handleInstagramOAuthStart } from "./api/instagram";
@@ -148,6 +149,12 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
       return handleAlertList(request, env, requestId);
     }
 
+    case "/api/reports": {
+      const denied = guardGet(request, requestId);
+      if (denied) return denied;
+      return handleReportList(request, env, requestId);
+    }
+
     case "/opportunities": {
       const denied = guardGet(request, requestId);
       if (denied) return denied;
@@ -166,6 +173,12 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
         const denied = guardGet(request, requestId);
         if (denied) return denied;
         return handleProductDetailDashboard(url, env, productPageId);
+      }
+      const reportApiId = matchSingleSegment(url.pathname, "/api/reports/");
+      if (reportApiId !== null) {
+        const denied = guardGet(request, requestId);
+        if (denied) return denied;
+        return handleReportDetail(env, requestId, reportApiId);
       }
       if (url.pathname.startsWith("/api/")) {
         return notImplemented(`Not implemented: ${url.pathname}`, requestId);
