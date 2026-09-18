@@ -126,3 +126,19 @@ binding = "BROWSER"
 # Meta Redirect URL (exact):
 #   https://aliexpress-scraper-cloudflare.auto-step8n.workers.dev/api/market/instagram/oauth/callback
 # ============================================================================
+
+# ============================================================================
+# Optional Shopify Admin GraphQL credentials (P8.33)
+# ----------------------------------------------------------------------------
+# When present, POST /api/shopify/products/:id exports a draft product via
+# Admin GraphQL 2026-07. These are OPTIONAL and must be set as secrets on the
+# Worker (they are not declared under `[secrets].required`, so deploys succeed
+# without them):
+#
+#   npx wrangler secret put SHOPIFY_SHOP_DOMAIN
+#   npx wrangler secret put SHOPIFY_ADMIN_ACCESS_TOKEN
+#   npx wrangler secret put SHOPIFY_EXPORT_TOKEN
+#
+# SHOPIFY_API_VERSION defaults to 2026-07 when unset. Without credentials the
+# endpoint degrades with SHOPIFY_NOT_CONFIGURED. See src/shopify/.
+# ============================================================================

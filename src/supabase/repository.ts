@@ -178,6 +178,39 @@ export interface ReportRow {
   generated_at?: string;
 }
 
+export interface PersistedShopifyListingRecord {
+  id: string;
+  product_id: string;
+  shop_domain: string;
+  shopify_product_id: string | null;
+  shopify_variant_id: string | null;
+  status: string;
+  dedup_key: string;
+  title: string;
+  payload: Record<string, unknown>;
+  last_error: Record<string, unknown> | null;
+  exported_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Upsert payload for `public.shopify_listings`. `created_at` is intentionally
+ * absent so the original first-write timestamp survives conflict.
+ */
+export interface ShopifyListingRow {
+  product_id: string;
+  shop_domain: string;
+  shopify_product_id: string | null;
+  shopify_variant_id: string | null;
+  status: string;
+  dedup_key: string;
+  title: string;
+  payload: Record<string, unknown>;
+  last_error?: Record<string, unknown> | null;
+  exported_at?: string | null;
+}
+
 export interface ProductListFilter {
   limit: number;
   offset: number;
@@ -240,6 +273,9 @@ const REPORT_SELECT =
 const REPORT_CONFLICT = "report_type,dedup_key";
 const REPORT_ID_UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SHOPIFY_LISTING_SELECT =
+  "id, product_id, shop_domain, shopify_product_id, shopify_variant_id, status, dedup_key, title, payload, last_error, exported_at, created_at, updated_at";
+const SHOPIFY_LISTING_CONFLICT = "shop_domain,product_id";
 
 /**
  * Ingests one already-normalized Phase 1 `Product` into the P0.2 schema.
@@ -1367,6 +1403,84 @@ export async function getReportById(
     return { status: "found", data: data as PersistedReportRecord };
   } catch (err) {
     return { status: "error", code: "report_lookup_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Read-only Shopify listing lookup by shop + product (P8.33). Never writes.
+ */
+export async function getShopifyListingByShopAndProduct(
+  env: Env,
+  shopDomain: string,
+  productId: string,
+): Promise<RepositoryResult<PersistedShopifyListingRecord>> {
+  if (!PRODUCT_ID_UUID.test(productId) || !shopDomain) {
+    return { status: "not_found" };
+  }
+
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    const { data, error } = await client
+      .from("shopify_listings")
+      .select(SHOPIFY_LISTING_SELECT)
+      .eq("shop_domain", shopDomain)
+      .eq("product_id", productId)
+      .maybeSingle();
+    if (error) {
+      return {
+        status: "error",
+        code: "shopify_listing_lookup_failed",
+        message: errorMessage(error, "failed to look up shopify listing"),
+      };
+    }
+    if (!data) {
+      return { status: "not_found" };
+    }
+    return { status: "found", data: data as PersistedShopifyListingRecord };
+  } catch (err) {
+    return { status: "error", code: "shopify_listing_lookup_failed", message: toString(err) };
+  }
+}
+
+/**
+ * Upserts a Shopify listing (P8.33). Deduplication is on
+ * `(shop_domain, product_id)`. Never throws.
+ */
+export async function upsertShopifyListing(
+  env: Env,
+  row: ShopifyListingRow,
+): Promise<RepositoryResult<PersistedShopifyListingRecord>> {
+  if (!row.product_id || !row.shop_domain || !row.dedup_key) {
+    return { status: "invalid", message: "shopify listing requires product_id, shop_domain and dedup_key" };
+  }
+
+  const client = getSupabaseClient(env);
+  if (!client) {
+    return { status: "credentials_missing" };
+  }
+
+  try {
+    const { data, error, status } = await client
+      .from("shopify_listings")
+      .upsert(row, { onConflict: SHOPIFY_LISTING_CONFLICT })
+      .select(SHOPIFY_LISTING_SELECT);
+    if (error || !Array.isArray(data) || data.length === 0) {
+      return {
+        status: "error",
+        code: "shopify_listings_upsert_failed",
+        message: errorMessage(error, "failed to upsert shopify listing"),
+      };
+    }
+    return {
+      status: status === 201 ? "created" : "updated",
+      data: data[0] as PersistedShopifyListingRecord,
+    };
+  } catch (err) {
+    return { status: "error", code: "shopify_listings_upsert_failed", message: toString(err) };
   }
 }
 

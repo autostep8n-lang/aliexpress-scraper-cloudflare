@@ -152,6 +152,16 @@ const TABLE_DEFAULTS: Record<string, Record<string, unknown>> = {
     created_at: "2026-08-18T00:00:00.000Z",
     updated_at: "2026-08-18T00:00:00.000Z",
   },
+  shopify_listings: {
+    shopify_product_id: null,
+    shopify_variant_id: null,
+    status: "draft",
+    payload: {},
+    last_error: null,
+    exported_at: null,
+    created_at: "2026-08-18T00:00:00.000Z",
+    updated_at: "2026-08-18T00:00:00.000Z",
+  },
 };
 
 let idCounter = 0;
@@ -196,6 +206,7 @@ export function createMockPostgrest(): MockPostgrest {
     scores: [],
     alerts: [],
     reports: [],
+    shopify_listings: [],
   };
   const requests: RecordedRequest[] = [];
   const overrides: Override[] = [];

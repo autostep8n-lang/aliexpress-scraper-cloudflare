@@ -87,4 +87,23 @@ export interface Env {
    * committed. Pair with INSTAGRAM_APP_ID. The callback never logs this value.
    */
   INSTAGRAM_APP_SECRET?: string;
+  /**
+   * Optional Shopify shop hostname (example.myshopify.com). Used only by
+   * POST /api/shopify/products/:id. Not declared under `[secrets].required`.
+   */
+  SHOPIFY_SHOP_DOMAIN?: string;
+  /**
+   * Optional Shopify Admin API access token. Sent as `X-Shopify-Access-Token`.
+   * Set as a secret, never committed. Pair with SHOPIFY_SHOP_DOMAIN.
+   */
+  SHOPIFY_ADMIN_ACCESS_TOKEN?: string;
+  /**
+   * Optional bearer token that authenticates POST /api/shopify/products/:id.
+   * Distinct from the Shopify Admin token. Set as a secret, never committed.
+   */
+  SHOPIFY_EXPORT_TOKEN?: string;
+  /**
+   * Optional Shopify Admin GraphQL API version. Defaults to `2026-07`.
+   */
+  SHOPIFY_API_VERSION?: string;
 }

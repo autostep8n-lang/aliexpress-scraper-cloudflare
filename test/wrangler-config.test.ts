@@ -27,7 +27,23 @@ describe("wrangler.toml Supabase bindings", () => {
   it("never assigns a secret value inside wrangler.toml", () => {
     expect(wranglerToml).not.toMatch(/SUPABASE_URL\s*=\s*"/);
     expect(wranglerToml).not.toMatch(/SUPABASE_SECRET_KEY\s*=\s*"/);
+    expect(wranglerToml).not.toMatch(/SHOPIFY_ADMIN_ACCESS_TOKEN\s*=\s*"/);
+    expect(wranglerToml).not.toMatch(/SHOPIFY_EXPORT_TOKEN\s*=\s*"/);
     expect(wranglerToml).not.toMatch(/<your-secret-key>/);
+  });
+
+  it("keeps Shopify bindings optional and out of required secrets", () => {
+    expect(envSource).toContain("SHOPIFY_SHOP_DOMAIN");
+    expect(envSource).toContain("SHOPIFY_ADMIN_ACCESS_TOKEN");
+    expect(envSource).toContain("SHOPIFY_EXPORT_TOKEN");
+    expect(envSource).toContain("SHOPIFY_API_VERSION");
+    expect(wranglerToml).toContain("SHOPIFY_SHOP_DOMAIN");
+    expect(wranglerToml).toContain("SHOPIFY_ADMIN_ACCESS_TOKEN");
+    expect(wranglerToml).toContain("SHOPIFY_EXPORT_TOKEN");
+    expect(wranglerToml).toMatch(
+      /required\s*=\s*\[\s*"SUPABASE_URL",\s*"SUPABASE_SECRET_KEY"\s*\]/,
+    );
+    expect(wranglerToml).not.toMatch(/required\s*=\s*\[[^\]]*SHOPIFY_/);
   });
 
   it("keeps the runtime Env bindings in src/env.ts aligned with the config", () => {

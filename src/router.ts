@@ -11,6 +11,7 @@ import { handleYouTube } from "./api/youtube";
 import { handleHealth, handleSupabaseHealth } from "./health";
 import { handleProductDetail, handleProductIngest, handleProductList } from "./api/products";
 import { handleScrape } from "./api/scrape";
+import { handleShopifyProductExport } from "./api/shopify";
 import { jsonError, methodNotAllowed, notFound, notImplemented } from "./utils/http";
 import { createRequestId, logError, logRequest } from "./logging";
 import { parseProductId } from "./dashboard/assemble";
@@ -162,6 +163,13 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
     }
 
     default: {
+      const shopifyProductId = matchSingleSegment(url.pathname, "/api/shopify/products/");
+      if (shopifyProductId !== null) {
+        if (request.method !== "POST") {
+          return methodNotAllowed(["POST"], requestId);
+        }
+        return handleShopifyProductExport(request, env, requestId, shopifyProductId);
+      }
       const productApiId = matchSingleSegment(url.pathname, "/api/products/");
       if (productApiId !== null) {
         const denied = guardGet(request, requestId);

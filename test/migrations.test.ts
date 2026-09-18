@@ -28,6 +28,7 @@ const EXPECTED_TABLES = [
   "country_opportunity_scores",
   "alerts",
   "reports",
+  "shopify_listings",
 ] as const;
 
 const EXPECTED_MIGRATIONS = [
@@ -50,6 +51,7 @@ const EXPECTED_MIGRATIONS = [
   "20260817000017_scores_unique.sql",
   "20260817000018_alerts.sql",
   "20260817000019_reports.sql",
+  "20260817000020_shopify_listings.sql",
 ] as const;
 
 describe("Supabase migrations", () => {
@@ -190,6 +192,44 @@ describe("Supabase migrations", () => {
     expect(migration).toMatch(/generated_at timestamptz not null default now\(\)/i);
     expect(migration).toMatch(/reports_generated_at_idx/i);
     expect(migration).toMatch(/reports_payload_gin\s+on public\.reports using gin \(payload\)/i);
+  });
+
+  it("gives shopify_listings non-partial UNIQUE (shop_domain, product_id) and (shop_domain, shopify_product_id)", () => {
+    const migration = readFileSync(join(migrationsDir, "20260817000020_shopify_listings.sql"), "utf8");
+    const statements = migration
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("--"))
+      .join("\n");
+    expect(statements).toMatch(
+      /unique index shopify_listings_shop_product_uidx\s+on public\.shopify_listings \(shop_domain, product_id\)/i,
+    );
+    expect(statements).toMatch(
+      /unique index shopify_listings_shop_shopify_product_uidx\s+on public\.shopify_listings \(shop_domain, shopify_product_id\)/i,
+    );
+    expect(statements).not.toMatch(/unique index \S+\s+on public\.shopify_listings \(product_id\)/i);
+    expect(statements).not.toMatch(/where\s+[a-z_]+\s+is\s+not\s+null/i);
+    expect(statements).not.toMatch(/drop\s+table/i);
+    expect(statements).not.toMatch(/delete\s+from/i);
+  });
+
+  it("pins shopify_listings columns, indexes, trigger, and RLS to the approved v1 contract", () => {
+    const migration = readFileSync(join(migrationsDir, "20260817000020_shopify_listings.sql"), "utf8");
+    expect(migration).toMatch(/product_id uuid not null references public\.products \(id\) on delete cascade/i);
+    expect(migration).toMatch(/shop_domain text not null/i);
+    expect(migration).toMatch(/shopify_product_id text/i);
+    expect(migration).toMatch(/shopify_variant_id text/i);
+    expect(migration).toMatch(/status in \('draft', 'exported', 'error'\)/i);
+    expect(migration).toMatch(/dedup_key text not null/i);
+    expect(migration).toMatch(/title text not null/i);
+    expect(migration).toMatch(/payload jsonb not null default '\{\}'::jsonb/i);
+    expect(migration).toMatch(/last_error jsonb/i);
+    expect(migration).toMatch(/exported_at timestamptz/i);
+    expect(migration).toMatch(/shopify_listings_product_idx/i);
+    expect(migration).toMatch(/shopify_listings_shop_idx/i);
+    expect(migration).toMatch(/shopify_listings_status_idx/i);
+    expect(migration).toMatch(/shopify_listings_set_updated_at/i);
+    expect(migration).toMatch(/alter table public\.shopify_listings enable row level security/i);
+    expect(migration).not.toMatch(/create\s+(or\s+replace\s+)?policy/i);
   });
 
   it("sets a shared updated_at trigger on every table that has updated_at", () => {
