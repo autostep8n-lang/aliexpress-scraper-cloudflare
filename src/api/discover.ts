@@ -1,5 +1,6 @@
 import type { Env } from "../env";
 import { findDiscovery } from "../discovery/registry";
+import type { DiscoveryPlatform } from "../discovery/types";
 import { ScraperError } from "../scrapers/types";
 import type { RepositoryResult, PersistedProduct } from "../supabase/repository";
 import { jsonError, jsonOk } from "../utils/http";
@@ -7,6 +8,7 @@ import { jsonError, jsonOk } from "../utils/http";
 /**
  * GET /api/discover pipeline: discover products from a platform search/category
  * page, normalize each one, and persist them through the shared repository.
+ * Defaults to tiktok-shop; pass `platform=aliexpress` for Dropshipping discovery.
  *
  * Outcomes map to:
  * - 200 `{ status: "ok", discovered, persisted, created, updated, failed, products }`
@@ -42,13 +44,19 @@ export async function handleDiscover(
     limit = Math.min(limit, MAX_LIMIT);
   }
 
+  const platformRaw = params.get("platform")?.trim().toLowerCase();
+  const platform: DiscoveryPlatform = platformRaw === "aliexpress" ? "aliexpress" : "tiktok-shop";
+  if (platformRaw && platformRaw !== "tiktok-shop" && platformRaw !== "aliexpress") {
+    return jsonError(400, "Invalid 'platform' parameter", "INVALID_PLATFORM", requestId);
+  }
+
   if (!env.SUPABASE_URL || !env.SUPABASE_SECRET_KEY) {
     return jsonError(503, "Supabase is not configured", "SUPABASE_NOT_CONFIGURED", requestId);
   }
 
-  const discovery = findDiscovery("tiktok-shop");
+  const discovery = findDiscovery(platform);
   if (!discovery) {
-    return jsonError(501, "No discovery module registered for tiktok-shop", "NO_DISCOVERY", requestId);
+    return jsonError(501, `No discovery module registered for ${platform}`, "NO_DISCOVERY", requestId);
   }
 
   let result;

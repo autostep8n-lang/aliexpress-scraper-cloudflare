@@ -1,6 +1,7 @@
 import { handleDashboard, handleOpportunitiesDashboard, handleProductDetailDashboard } from "./dashboard";
 import { handleAlertList } from "./api/alerts";
 import { handleReportDetail, handleReportList } from "./api/reports";
+import { handleAliExpressOAuthCallback, handleAliExpressOAuthStart } from "./api/aliexpress-oauth";
 import { handleDiscover } from "./api/discover";
 import { handleGoogleTrends } from "./api/google-trends";
 import { handleInstagram, handleInstagramOAuthCallback, handleInstagramOAuthStart } from "./api/instagram";
@@ -84,6 +85,18 @@ async function dispatch(request: Request, env: Env, ctx: ExecutionContext, reque
       const denied = guardGet(request, requestId);
       if (denied) return denied;
       return handleDiscover(request, env, ctx, requestId);
+    }
+
+    case "/api/aliexpress/oauth": {
+      const denied = guardGet(request, requestId);
+      if (denied) return denied;
+      return handleAliExpressOAuthStart(request, env, requestId);
+    }
+
+    case "/api/aliexpress/oauth/callback": {
+      const denied = guardGet(request, requestId);
+      if (denied) return denied;
+      return handleAliExpressOAuthCallback(request, env, requestId);
     }
 
     case "/api/market/google-trends": {

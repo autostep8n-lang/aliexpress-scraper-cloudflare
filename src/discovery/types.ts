@@ -7,7 +7,7 @@ import type { PersistedProduct, RepositoryResult } from "../supabase/repository"
  * once, as opposed to scraping a single known URL). Concrete modules live in
  * the same folder as this contract.
  */
-export type DiscoveryPlatform = "tiktok-shop";
+export type DiscoveryPlatform = "tiktok-shop" | "aliexpress";
 
 /** Inputs to a discovery run. `limit` must already be normalized by the caller. */
 export interface DiscoveryQuery {
@@ -25,7 +25,7 @@ export interface DiscoveryQuery {
 export interface DiscoveredProduct {
   /** The normalized product that was (or would be) persisted, when normalization succeeded. */
   product?: Product;
-  /** TikTok-specific raw payload stored on `product_sources.raw`. */
+  /** Platform-specific raw payload stored on `product_sources.raw`. */
   raw: Record<string, unknown>;
   /** Typed repository outcome for this product. */
   persisted: RepositoryResult<PersistedProduct>;

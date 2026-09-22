@@ -200,6 +200,12 @@ describe("GET /api/discover (tiktok-shop discovery pipeline)", () => {
     expect(body.code).toBe("BLOCKED");
   });
 
+  it("returns 400 INVALID_PLATFORM for an unknown platform", async () => {
+    const res = await get("/api/discover?q=earbuds&platform=amazon");
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { code: string }).code).toBe("INVALID_PLATFORM");
+  });
+
   it("returns 502 NO_PRODUCT_DATA when the page has no search data", async () => {
     server = createMockPostgrest();
     vi.stubGlobal("fetch", compositeFetch(server, "<html><body>empty app shell</body></html>"));

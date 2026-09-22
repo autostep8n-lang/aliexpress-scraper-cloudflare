@@ -11,6 +11,7 @@ import {
   looksBlocked,
   parseAliExpressPage,
 } from "../../src/scrapers/aliexpress-parser";
+import { persistAliExpressToken } from "../../src/scrapers/aliexpress-oauth";
 import { findScraper } from "../../src/scrapers/registry";
 import { ScraperError } from "../../src/scrapers/types";
 
@@ -649,7 +650,7 @@ describe("aliexpressScraper fallback recovery chain", () => {
           : input instanceof URL
             ? input
             : new URL((input as Request).url);
-      if (url.hostname === "api.aliexpress.com") {
+      if (url.hostname === "api-sg.aliexpress.com") {
         openApiCalls.push(url.href);
         const body = new URLSearchParams(init?.body?.toString());
         if (body.get("method") !== "aliexpress.ds.product.get") {
@@ -698,12 +699,32 @@ describe("aliexpressScraper fallback recovery chain", () => {
   it("prefers the Open Platform API over mtop when credentials are configured", async () => {
     const fetchFn = openApiCompositeFetch() as typeof fetch & { calls: string[] };
     vi.stubGlobal("fetch", fetchFn);
+    const kv = {
+      store: new Map<string, string>(),
+      async get(key: string) {
+        return this.store.get(key) ?? null;
+      },
+      async put(key: string, value: string) {
+        this.store.set(key, value);
+      },
+      async delete(key: string) {
+        this.store.delete(key);
+      },
+    };
     const env = {
       ALIEXPRESS_OPENAPI_KEY: "test-app-key",
       ALIEXPRESS_OPENAPI_SECRET: "test-app-secret",
+      SCRAPE_CACHE: kv as unknown as KVNamespace,
     } as unknown as Env;
+    await persistAliExpressToken(env, {
+      accessToken: "test-access-token",
+      refreshToken: "test-refresh-token",
+      expiresAt: Date.now() + 3600_000,
+      refreshExpiresAt: Date.now() + 86400_000,
+    });
+    const scrapeCtx = { waitUntil: () => undefined } as unknown as ExecutionContext;
 
-    const result = await aliexpressScraper.scrape(mtopUrl, env, ctx);
+    const result = await aliexpressScraper.scrape(mtopUrl, env, scrapeCtx);
 
     expect(fetchFn.calls).toHaveLength(1);
     expect(result.title).toBe("Portable Hair Straightener Comb 2600mAh");
@@ -718,7 +739,7 @@ describe("aliexpressScraper fallback recovery chain", () => {
           : input instanceof URL
             ? input
             : new URL((input as Request).url);
-      if (url.hostname === "api.aliexpress.com") {
+      if (url.hostname === "api-sg.aliexpress.com") {
         return Promise.resolve(
           new Response(JSON.stringify({ error_response: { code: "400", msg: "Invalid signature" } }), { status: 200 }),
         );
@@ -738,12 +759,32 @@ describe("aliexpressScraper fallback recovery chain", () => {
       return Promise.resolve(new Response(csrShellHtml(), { status: 200 }));
     };
     vi.stubGlobal("fetch", fetchFn);
+    const kv = {
+      store: new Map<string, string>(),
+      async get(key: string) {
+        return this.store.get(key) ?? null;
+      },
+      async put(key: string, value: string) {
+        this.store.set(key, value);
+      },
+      async delete(key: string) {
+        this.store.delete(key);
+      },
+    };
     const env = {
       ALIEXPRESS_OPENAPI_KEY: "test-app-key",
       ALIEXPRESS_OPENAPI_SECRET: "test-app-secret",
+      SCRAPE_CACHE: kv as unknown as KVNamespace,
     } as unknown as Env;
+    await persistAliExpressToken(env, {
+      accessToken: "test-access-token",
+      refreshToken: "test-refresh-token",
+      expiresAt: Date.now() + 3600_000,
+      refreshExpiresAt: Date.now() + 86400_000,
+    });
+    const scrapeCtx = { waitUntil: () => undefined } as unknown as ExecutionContext;
 
-    const result = await aliexpressScraper.scrape(mtopUrl, env, ctx);
+    const result = await aliexpressScraper.scrape(mtopUrl, env, scrapeCtx);
 
     expect(result.title).toBe("Portable Hair Straightener Comb 2600mAh");
     expect(result.data).toMatchObject({

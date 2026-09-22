@@ -26,8 +26,10 @@ export interface Env {
   /**
    * Optional AliExpress Open Platform (open.aliexpress.com) app credentials.
    * When set, the AliExpress scraper prefers the official `aliexpress.ds.product.get`
-   * API - the production-grade, anti-bot-free provider. Set as secrets, never
-   * committed. See `src/scrapers/aliexpress-openapi.ts`.
+   * API and AliExpress discovery can use `aliexpress.ds.text.search`. Set as
+   * secrets, never committed. Dropshipping OAuth lives on
+   * `/api/aliexpress/oauth` and `/api/aliexpress/oauth/callback`; tokens persist
+   * in `SCRAPE_CACHE`. See `src/scrapers/aliexpress-openapi.ts`.
    */
   ALIEXPRESS_OPENAPI_KEY?: string;
   ALIEXPRESS_OPENAPI_SECRET?: string;

@@ -2,62 +2,36 @@ import type { Env } from "../env";
 import type { AliExpressParsedProduct, AliExpressPrice } from "./aliexpress-parser";
 import { ScraperError } from "./types";
 import { md5 } from "../utils/md5";
+import { openApiCredentials, hasOpenApiCredentials } from "./aliexpress-openapi-credentials";
+import { resolveAliExpressAccessToken } from "./aliexpress-oauth";
+import { DS_BUSINESS_ENDPOINT, DS_SIGN_METHOD, dsHmacSign, dsTimestamp } from "./aliexpress-sign";
 
 /**
  * AliExpress Open Platform (open.aliexpress.com) provider.
  *
- * The officially supported way to query AliExpress product data programmatically.
- * Unlike scraping the public HTML or the internal mtop gateway, the Open
- * Platform API is designed for automation: it never serves the anti-bot
- * punish page and is the architecture this scraper should use in production
- * for high-volume / reliable ingestion.
+ * Official Dropshipping `aliexpress.ds.product.get`:
  *
- * This adapter implements the Open Platform "TOP"-style signing protocol used
- * by the dropshipping product endpoint `aliexpress.ds.product.get`:
+ *   - Request: `POST https://api-sg.aliexpress.com/sync` (form-encoded)
+ *   - Required: `product_id`, `ship_to_country`, `access_token`, `app_key`,
+ *     `timestamp`, `sign_method=sha256`, `sign`
+ *   - Signature: HMAC-SHA256 uppercase hex over sorted "keyvalue" pairs
  *
- *   - Request: `POST https://api.aliexpress.com/sync` (form-encoded)
- *   - Params: `method`, `app_key`, `timestamp` (`yyyy-MM-dd HH:mm:ss`),
- *     `format=json`, `v=1.0`, `sign_method=md5`, plus the API-specific params.
- *   - Signature: `sign = MD5(appSecret + <sorted params as "keyvalue" pairs>)`
- *     over every param except `sign` itself, sorted by key ascending.
- *
- * Credentials come from the environment (`ALIEXPRESS_OPENAPI_KEY` /
- * `ALIEXPRESS_OPENAPI_SECRET`) and are NEVER hardcoded. When they are not
- * configured the adapter throws a typed `PROVIDER_CREDENTIALS_MISSING` error so
- * callers can fall back to the no-credential providers (direct HTML, mtop).
- *
- * External setup still required:
- *   1. Register an app on https://open.aliexpress.com and enable the
- *      `aliexpress.ds.product.get` API for the "Dropshipping" category.
- *   2. Set `ALIEXPRESS_OPENAPI_KEY` and `ALIEXPRESS_OPENAPI_SECRET` as Worker
- *      secrets (Cloudflare dashboard or `wrangler secret put`).
- *   3. If the app was registered in a non-UTC timezone, the timestamp used
- *      here must match that timezone; adjust `TIMESTAMP_TZ_OFFSET_HOURS`.
+ * MD5 `openApiSign` is kept for the legacy signing helper only; DS calls
+ * never reuse it. Credentials come from `ALIEXPRESS_OPENAPI_KEY` /
+ * `ALIEXPRESS_OPENAPI_SECRET`. Access tokens are obtained via
+ * `/api/aliexpress/oauth` and stored in `SCRAPE_CACHE`.
  */
 
-const OPEN_API_ENDPOINT = "https://api.aliexpress.com/sync";
 const OPEN_API_METHOD = "aliexpress.ds.product.get";
-
-/** Hour offset of the app's registered timezone vs UTC (China = +8). */
-const TIMESTAMP_TZ_OFFSET_HOURS = 8;
-
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-export interface OpenApiCredentials {
-  appKey: string;
-  appSecret: string;
-}
+export { openApiCredentials, hasOpenApiCredentials };
+export type { OpenApiCredentials } from "./aliexpress-openapi-credentials";
 
-export function openApiCredentials(env: Env): OpenApiCredentials | undefined {
-  const appKey = env.ALIEXPRESS_OPENAPI_KEY?.trim();
-  const appSecret = env.ALIEXPRESS_OPENAPI_SECRET?.trim();
-  if (!appKey || !appSecret) return undefined;
-  return { appKey, appSecret };
-}
-
-export function hasOpenApiCredentials(env: Env): boolean {
-  return openApiCredentials(env) !== undefined;
+export interface FetchOpenApiOptions {
+  shipToCountry?: string;
+  accessToken?: string;
 }
 
 /**
@@ -69,6 +43,7 @@ export async function fetchAliExpressProductOpenApi(
   env: Env,
   itemId: string,
   url: URL,
+  options: FetchOpenApiOptions = {},
 ): Promise<AliExpressParsedProduct> {
   const credentials = openApiCredentials(env);
   if (!credentials) {
@@ -78,20 +53,25 @@ export async function fetchAliExpressProductOpenApi(
     );
   }
 
+  const accessToken = options.accessToken?.trim() || (await resolveAliExpressAccessToken(env));
+  const shipToCountry = shipToCountryCode(options.shipToCountry);
+
   const params: Record<string, string> = {
     method: OPEN_API_METHOD,
     app_key: credentials.appKey,
-    timestamp: openApiTimestamp(),
+    timestamp: dsTimestamp(),
     format: "json",
     v: "1.0",
-    sign_method: "md5",
+    sign_method: DS_SIGN_METHOD,
     product_id: itemId,
+    ship_to_country: shipToCountry,
+    access_token: accessToken,
   };
-  params["sign"] = openApiSign(credentials.appSecret, params);
+  params["sign"] = await dsHmacSign(credentials.appSecret, params);
 
   let response: Response;
   try {
-    response = await fetch(OPEN_API_ENDPOINT, {
+    response = await fetch(DS_BUSINESS_ENDPOINT, {
       method: "POST",
       headers: {
         "user-agent": USER_AGENT,
@@ -133,7 +113,7 @@ export function parseOpenApiPayload(body: string, hint: { url: URL; itemId: stri
   if (errorResponse) {
     const code = asString(errorResponse["code"]) ?? "UNKNOWN";
     const msg = asString(errorResponse["msg"]) ?? "unknown provider error";
-    if (/401|signature|invalid app|credential/i.test(`${code} ${msg}`)) {
+    if (/401|signature|invalid app|credential|IllegalAccessToken|access.?token/i.test(`${code} ${msg}`)) {
       throw new ScraperError("PROVIDER_AUTH_ERROR", `AliExpress Open Platform rejected credentials: ${msg}`);
     }
     if (/limit|frequency|throttle|exceed/i.test(msg)) {
@@ -152,7 +132,7 @@ export function parseOpenApiPayload(body: string, hint: { url: URL; itemId: stri
   return mapOpenApiResult(result, hint);
 }
 
-/** Signature: `MD5(secret + sorted "keyvalue" pairs of every param but sign)`. */
+/** Legacy MD5 signature. Not used by official DS HMAC-SHA256 calls. */
 export function openApiSign(secret: string, params: Record<string, string>): string {
   const sorted = Object.keys(params)
     .filter((key) => key !== "sign")
@@ -162,13 +142,16 @@ export function openApiSign(secret: string, params: Record<string, string>): str
   return md5(secret + sorted);
 }
 
-/** Open Platform timestamps use `yyyy-MM-dd HH:mm:ss` in the app's timezone. */
+/** Open Platform timestamps use `yyyy-MM-dd HH:mm:ss` in the app's timezone (UTC+8). */
 export function openApiTimestamp(date = new Date()): string {
-  const shifted = new Date(date.getTime() + TIMESTAMP_TZ_OFFSET_HOURS * 60 * 60 * 1000);
-  const pad = (value: number): string => String(value).padStart(2, "0");
-  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())} ${pad(
-    shifted.getUTCHours(),
-  )}:${pad(shifted.getUTCMinutes())}:${pad(shifted.getUTCSeconds())}`;
+  return dsTimestamp(date);
+}
+
+function shipToCountryCode(region?: string): string {
+  const code = region?.trim().toUpperCase();
+  if (!code) return "US";
+  if (code === "UK") return "GB";
+  return /^[A-Z]{2}$/.test(code) ? code : "US";
 }
 
 function mapOpenApiResult(result: Record<string, unknown>, hint: { url: URL; itemId: string }): AliExpressParsedProduct {

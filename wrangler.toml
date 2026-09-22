@@ -77,7 +77,11 @@ binding = "BROWSER"
 # ----------------------------------------------------------------------------
 # When present, the AliExpress scraper prefers the official
 # `aliexpress.ds.product.get` API - the production-grade, anti-bot-free
-# provider. These are OPTIONAL and must be set as secrets on the Worker (they
+# provider. Dropshipping OAuth (HMAC-SHA256) lives on:
+#   GET /api/aliexpress/oauth
+#   GET /api/aliexpress/oauth/callback
+# Tokens persist in SCRAPE_CACHE when that KV binding is present.
+# These are OPTIONAL and must be set as secrets on the Worker (they
 # are not declared under `[secrets].required`, so deploys succeed without them):
 #
 #   npx wrangler secret put ALIEXPRESS_OPENAPI_KEY

@@ -6,6 +6,8 @@ import {
   openApiTimestamp,
   parseOpenApiPayload,
 } from "../../src/scrapers/aliexpress-openapi";
+import { persistAliExpressToken } from "../../src/scrapers/aliexpress-oauth";
+import { DS_BUSINESS_ENDPOINT, dsHmacSign } from "../../src/scrapers/aliexpress-sign";
 import { ScraperError } from "../../src/scrapers/types";
 import { md5 } from "../../src/utils/md5";
 import type { Env } from "../../src/env";
@@ -13,11 +15,20 @@ import type { Env } from "../../src/env";
 const APP_KEY = "test-app-key";
 const APP_SECRET = "test-app-secret";
 const ITEM_ID = "1005012410104961";
+const ACCESS_TOKEN = "test-access-token";
 
-const envWithCreds = {
-  ALIEXPRESS_OPENAPI_KEY: APP_KEY,
-  ALIEXPRESS_OPENAPI_SECRET: APP_SECRET,
-} as unknown as Env;
+class MemoryKV {
+  private readonly store = new Map<string, string>();
+  async get(key: string): Promise<string | null> {
+    return this.store.get(key) ?? null;
+  }
+  async put(key: string, value: string): Promise<void> {
+    this.store.set(key, value);
+  }
+  async delete(key: string): Promise<void> {
+    this.store.delete(key);
+  }
+}
 
 const envWithoutCreds = {} as unknown as Env;
 
@@ -55,6 +66,22 @@ function errorBody(code: string, msg: string): string {
   return JSON.stringify({ error_response: { code, msg } });
 }
 
+async function envWithToken(): Promise<Env> {
+  const kv = new MemoryKV();
+  const env = {
+    ALIEXPRESS_OPENAPI_KEY: APP_KEY,
+    ALIEXPRESS_OPENAPI_SECRET: APP_SECRET,
+    SCRAPE_CACHE: kv as unknown as KVNamespace,
+  } as unknown as Env;
+  await persistAliExpressToken(env, {
+    accessToken: ACCESS_TOKEN,
+    refreshToken: "test-refresh-token",
+    expiresAt: Date.now() + 3600_000,
+    refreshExpiresAt: Date.now() + 86400_000,
+  });
+  return env;
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -85,13 +112,11 @@ describe("openApiSign", () => {
 
 describe("openApiTimestamp", () => {
   it("formats UTC+8 time as yyyy-MM-dd HH:mm:ss", () => {
-    // 2026-08-25T00:00:00Z is 2026-08-25 08:00:00 in UTC+8.
     const date = new Date("2026-08-25T00:00:00.000Z");
     expect(openApiTimestamp(date)).toBe("2026-08-25 08:00:00");
   });
 
   it("rolls the date across midnight correctly", () => {
-    // 2026-08-25T17:00:00Z is 2026-08-26 01:00:00 in UTC+8.
     const date = new Date("2026-08-25T17:00:00.000Z");
     expect(openApiTimestamp(date)).toBe("2026-08-26 01:00:00");
   });
@@ -103,7 +128,12 @@ describe("hasOpenApiCredentials", () => {
   });
 
   it("is true when both secrets are configured", () => {
-    expect(hasOpenApiCredentials(envWithCreds)).toBe(true);
+    expect(
+      hasOpenApiCredentials({
+        ALIEXPRESS_OPENAPI_KEY: APP_KEY,
+        ALIEXPRESS_OPENAPI_SECRET: APP_SECRET,
+      } as unknown as Env),
+    ).toBe(true);
   });
 });
 
@@ -127,6 +157,15 @@ describe("parseOpenApiPayload", () => {
     } catch (err) {
       const typed = err as ScraperError;
       expect(typed.code).toBe("PROVIDER_AUTH_ERROR");
+    }
+  });
+
+  it("maps IllegalAccessToken to PROVIDER_AUTH_ERROR", () => {
+    try {
+      parseOpenApiPayload(errorBody("IllegalAccessToken", "The specified access token is invalid or expired"), HINT);
+      throw new Error("expected PROVIDER_AUTH_ERROR");
+    } catch (err) {
+      expect((err as ScraperError).code).toBe("PROVIDER_AUTH_ERROR");
     }
   });
 
@@ -183,30 +222,37 @@ describe("fetchAliExpressProductOpenApi", () => {
     }
   });
 
-  it("posts a signed form body and maps the response", async () => {
-    const fetchStub = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+  it("posts a HMAC-SHA256 signed form body with access_token and ship_to_country", async () => {
+    const env = await envWithToken();
+    const fetchStub = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const href = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+      expect(href).toBe(DS_BUSINESS_ENDPOINT);
       const body = init?.body?.toString() ?? "";
       const params = new URLSearchParams(body);
       expect(params.get("method")).toBe("aliexpress.ds.product.get");
       expect(params.get("app_key")).toBe(APP_KEY);
       expect(params.get("product_id")).toBe(ITEM_ID);
+      expect(params.get("ship_to_country")).toBe("US");
+      expect(params.get("access_token")).toBe(ACCESS_TOKEN);
       expect(params.get("format")).toBe("json");
-      expect(params.get("sign_method")).toBe("md5");
+      expect(params.get("sign_method")).toBe("sha256");
       const sign = params.get("sign") ?? "";
-      expect(sign).toMatch(/^[0-9a-f]{32}$/);
-      const unsigned = new Map([...params.entries()].filter(([key]) => key !== "sign"));
-      expect(sign).toBe(openApiSign(APP_SECRET, Object.fromEntries(unsigned)));
+      expect(sign).toMatch(/^[0-9A-F]{64}$/);
+      const unsigned = Object.fromEntries([...params.entries()].filter(([key]) => key !== "sign"));
+      expect(sign).toBe(await dsHmacSign(APP_SECRET, unsigned));
+      expect(sign).not.toBe(openApiSign(APP_SECRET, unsigned));
       return new Response(successBody(), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchStub);
 
-    const parsed = await fetchAliExpressProductOpenApi(envWithCreds, ITEM_ID, HINT.url);
+    const parsed = await fetchAliExpressProductOpenApi(env, ITEM_ID, HINT.url);
     expect(fetchStub).toHaveBeenCalledTimes(1);
     expect(parsed.itemId).toBe(ITEM_ID);
     expect(parsed.title).toBe("Portable Hair Straightener Comb 2600mAh");
   });
 
   it("surfaces a typed PROVIDER_NETWORK_ERROR when unreachable", async () => {
+    const env = await envWithToken();
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
@@ -214,7 +260,7 @@ describe("fetchAliExpressProductOpenApi", () => {
       }),
     );
     try {
-      await fetchAliExpressProductOpenApi(envWithCreds, ITEM_ID, HINT.url);
+      await fetchAliExpressProductOpenApi(env, ITEM_ID, HINT.url);
       throw new Error("expected PROVIDER_NETWORK_ERROR");
     } catch (err) {
       const typed = err as ScraperError;
@@ -223,9 +269,10 @@ describe("fetchAliExpressProductOpenApi", () => {
   });
 
   it("surfaces a typed PROVIDER_HTTP_ERROR on non-2xx", async () => {
+    const env = await envWithToken();
     vi.stubGlobal("fetch", vi.fn(async () => new Response("server error", { status: 502 })));
     try {
-      await fetchAliExpressProductOpenApi(envWithCreds, ITEM_ID, HINT.url);
+      await fetchAliExpressProductOpenApi(env, ITEM_ID, HINT.url);
       throw new Error("expected PROVIDER_HTTP_ERROR");
     } catch (err) {
       const typed = err as ScraperError;
