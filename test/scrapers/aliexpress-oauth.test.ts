@@ -12,6 +12,7 @@ import {
   persistAliExpressToken,
   refreshAliExpressToken,
   resolveAliExpressAccessToken,
+  tokenPayloadShape,
 } from "../../src/scrapers/aliexpress-oauth";
 import { DS_TOKEN_CREATE_PATH, DS_TOKEN_REFRESH_PATH, dsHmacSign } from "../../src/scrapers/aliexpress-sign";
 import { ScraperError } from "../../src/scrapers/types";
@@ -100,20 +101,21 @@ describe("parseAliExpressOAuthCallbackParams", () => {
   });
 });
 
+function tokenFields() {
+  return {
+    access_token: ACCESS_TOKEN,
+    refresh_token: REFRESH_TOKEN,
+    expires_in: 36000,
+    refresh_expires_in: 2592000,
+    user_id: "123456",
+    seller_id: "789",
+  };
+}
+
 describe("parseTokenCreatePayload", () => {
   it("maps access_token, refresh_token, and TTLs", () => {
     const now = Date.UTC(2026, 8, 20, 0, 0, 0);
-    const token = parseTokenCreatePayload(
-      {
-        access_token: ACCESS_TOKEN,
-        refresh_token: REFRESH_TOKEN,
-        expires_in: 36000,
-        refresh_expires_in: 2592000,
-        user_id: "123456",
-        seller_id: "789",
-      },
-      now,
-    );
+    const token = parseTokenCreatePayload(tokenFields(), now);
     expect(token.accessToken).toBe(ACCESS_TOKEN);
     expect(token.refreshToken).toBe(REFRESH_TOKEN);
     expect(token.expiresAt).toBe(now + 36000 * 1000);
@@ -122,13 +124,74 @@ describe("parseTokenCreatePayload", () => {
     expect(token.sellerId).toBe("789");
   });
 
+  it("maps IOP gateway body as a JSON string", () => {
+    const now = Date.UTC(2026, 8, 20, 0, 0, 0);
+    const token = parseTokenCreatePayload(
+      { code: "0", type: "isp", message: "Request success", body: JSON.stringify(tokenFields()) },
+      now,
+    );
+    expect(token.accessToken).toBe(ACCESS_TOKEN);
+    expect(token.refreshToken).toBe(REFRESH_TOKEN);
+    expect(token.expiresAt).toBe(now + 36000 * 1000);
+  });
+
+  it("maps nested result / response / method envelopes", () => {
+    const now = Date.UTC(2026, 8, 20, 0, 0, 0);
+    expect(parseTokenCreatePayload({ result: tokenFields() }, now).accessToken).toBe(ACCESS_TOKEN);
+    expect(parseTokenCreatePayload({ response: tokenFields() }, now).refreshToken).toBe(REFRESH_TOKEN);
+    expect(parseTokenCreatePayload({ "/auth/token/create_response": tokenFields() }, now).userId).toBe("123456");
+    expect(parseTokenCreatePayload({ result: JSON.stringify(tokenFields()) }, now).sellerId).toBe("789");
+  });
+
+  it("maps camelCase data envelopes", () => {
+    const now = Date.UTC(2026, 8, 20, 0, 0, 0);
+    const token = parseTokenCreatePayload(
+      {
+        code: "0",
+        data: {
+          accessToken: ACCESS_TOKEN,
+          refreshToken: REFRESH_TOKEN,
+          expiresIn: 10,
+          refreshExpiresIn: 20,
+          userId: "99",
+          sellerId: "88",
+        },
+      },
+      now,
+    );
+    expect(token.accessToken).toBe(ACCESS_TOKEN);
+    expect(token.refreshToken).toBe(REFRESH_TOKEN);
+    expect(token.expiresAt).toBe(now + 10_000);
+    expect(token.refreshExpiresAt).toBe(now + 20_000);
+    expect(token.userId).toBe("99");
+    expect(token.sellerId).toBe("88");
+  });
+
   it("throws INVALID_PAYLOAD when tokens are missing", () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+      logs.push(String(line));
+    });
     try {
-      parseTokenCreatePayload({ expires_in: 10 });
+      parseTokenCreatePayload({ expires_in: 10, extra: ACCESS_TOKEN });
       throw new Error("expected INVALID_PAYLOAD");
     } catch (err) {
       expect((err as ScraperError).code).toBe("INVALID_PAYLOAD");
+      expect((err as ScraperError).message).not.toContain(ACCESS_TOKEN);
+      expect((err as ScraperError).message).not.toContain(REFRESH_TOKEN);
+      expect(logs.join("\n")).not.toContain(ACCESS_TOKEN);
+      expect(logs.join("\n")).not.toContain(REFRESH_TOKEN);
+    } finally {
+      spy.mockRestore();
     }
+  });
+
+  it("tokenPayloadShape never includes token values", () => {
+    const shape = tokenPayloadShape({ body: JSON.stringify(tokenFields()), extra: ACCESS_TOKEN });
+    const serialized = JSON.stringify(shape);
+    expect(serialized).not.toContain(ACCESS_TOKEN);
+    expect(serialized).not.toContain(REFRESH_TOKEN);
+    expect(shape).toMatchObject({ type: "object" });
   });
 });
 
@@ -177,11 +240,16 @@ describe("exchangeAliExpressAuthorizationCode", () => {
       const unsigned = Object.fromEntries([...params.entries()].filter(([key]) => key !== "sign"));
       expect(params.get("sign")).toBe(await dsHmacSign(APP_SECRET, unsigned, DS_TOKEN_CREATE_PATH));
       return jsonResponse({
-        access_token: ACCESS_TOKEN,
-        refresh_token: REFRESH_TOKEN,
-        expires_in: 36000,
-        refresh_expires_in: 2592000,
-        user_id: "42",
+        code: "0",
+        type: "isp",
+        message: "Request success",
+        body: JSON.stringify({
+          access_token: ACCESS_TOKEN,
+          refresh_token: REFRESH_TOKEN,
+          expires_in: 36000,
+          refresh_expires_in: 2592000,
+          user_id: "42",
+        }),
       });
     });
     vi.stubGlobal("fetch", fetchStub);

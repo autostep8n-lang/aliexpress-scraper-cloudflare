@@ -10,6 +10,7 @@ import {
   dsTimestamp,
   quoteJsonIntegerFields,
 } from "./aliexpress-sign";
+import { logInfo } from "../logging";
 import { openApiCredentials } from "./aliexpress-openapi-credentials";
 
 /**
@@ -41,9 +42,14 @@ const INTEGER_FIELDS = [
   "expire_time",
   "expires_in",
   "refresh_expires_in",
+  "refresh_token_valid_time",
   "seller_id",
   "account_id",
+  "havana_id",
+  "access_token",
+  "refresh_token",
 ] as const;
+const TOKEN_WALK_MAX_DEPTH = 6;
 
 export interface AliExpressDsToken {
   accessToken: string;
@@ -157,20 +163,37 @@ export async function resolveAliExpressAccessToken(env: Env, now = Date.now()): 
 }
 
 export function parseTokenCreatePayload(payload: Record<string, unknown>, now = Date.now()): AliExpressDsToken {
-  const root = unwrapTokenPayload(payload);
-  const accessToken = asNonEmptyString(root["access_token"]);
-  const refreshToken = asNonEmptyString(root["refresh_token"]);
-  if (!accessToken || !refreshToken) {
+  const gatewayError = gatewayErrorFromPayload(payload);
+  if (gatewayError) throw gatewayError;
+
+  const root = findTokenRecord(payload);
+  const accessToken = root ? readTokenValue(root, "access_token", "accessToken") : undefined;
+  const refreshToken = root ? readTokenValue(root, "refresh_token", "refreshToken") : undefined;
+  if (!root || !accessToken || !refreshToken) {
+    logInfo("aliexpress.oauth.invalid_payload", tokenPayloadShape(payload));
     throw new ScraperError("INVALID_PAYLOAD", "AliExpress token response is missing access_token or refresh_token");
   }
-  const expiresIn = toFiniteInt(root["expires_in"]);
-  const refreshExpiresIn = toFiniteInt(root["refresh_expires_in"]);
-  const expiresAt = expiresIn !== null && expiresIn > 0 ? now + expiresIn * 1000 : now;
-  const refreshExpiresAt =
-    refreshExpiresIn !== null && refreshExpiresIn > 0 ? now + refreshExpiresIn * 1000 : null;
-  const token: AliExpressDsToken = { accessToken, refreshToken, expiresAt, refreshExpiresAt };
-  const userId = asNonEmptyString(root["user_id"]);
-  const sellerId = asNonEmptyString(root["seller_id"]) ?? asNonEmptyString(root["account_id"]);
+
+  const expiresAt = resolveExpiry(root, now, ["expires_in", "expiresIn"], ["expire_time", "expireTime"]);
+  const refreshExpiresAt = resolveExpiry(
+    root,
+    now,
+    ["refresh_expires_in", "refreshExpiresIn"],
+    ["refresh_token_valid_time", "refreshTokenValidTime"],
+  );
+  const token: AliExpressDsToken = {
+    accessToken,
+    refreshToken,
+    expiresAt: expiresAt ?? now,
+    refreshExpiresAt,
+  };
+  const userId =
+    asNonEmptyString(root["user_id"]) ?? asNonEmptyString(root["userId"]) ?? asNonEmptyString(root["havana_id"]);
+  const sellerId =
+    asNonEmptyString(root["seller_id"]) ??
+    asNonEmptyString(root["sellerId"]) ??
+    asNonEmptyString(root["account_id"]) ??
+    asNonEmptyString(root["accountId"]);
   if (userId) token.userId = userId;
   if (sellerId) token.sellerId = sellerId;
   return token;
@@ -266,14 +289,116 @@ async function postSystemApi(
   return record;
 }
 
-function unwrapTokenPayload(payload: Record<string, unknown>): Record<string, unknown> {
-  const nested =
-    asRecord(payload["result"]) ??
-    asRecord(payload["response"]) ??
-    asRecord(payload["data"]) ??
-    asRecord(payload["/auth/token/create_response"]) ??
-    asRecord(payload["/auth/token/refresh_response"]);
-  return nested ?? payload;
+function findTokenRecord(payload: Record<string, unknown>): Record<string, unknown> | undefined {
+  const queue: Array<{ value: unknown; depth: number }> = [{ value: payload, depth: 0 }];
+  const seen = new Set<unknown>();
+  while (queue.length > 0) {
+    const next = queue.shift();
+    if (!next) break;
+    const record = coerceRecord(next.value);
+    if (!record || seen.has(record)) continue;
+    seen.add(record);
+    if (readTokenValue(record, "access_token", "accessToken") && readTokenValue(record, "refresh_token", "refreshToken")) {
+      return record;
+    }
+    if (next.depth >= TOKEN_WALK_MAX_DEPTH) continue;
+    for (const value of Object.values(record)) {
+      queue.push({ value, depth: next.depth + 1 });
+    }
+  }
+  return undefined;
+}
+
+function coerceRecord(value: unknown): Record<string, unknown> | undefined {
+  const direct = asRecord(value);
+  if (direct) return direct;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return undefined;
+  try {
+    return asRecord(JSON.parse(quoteJsonIntegerFields(trimmed, INTEGER_FIELDS)));
+  } catch {
+    return undefined;
+  }
+}
+
+function readTokenValue(record: Record<string, unknown>, snake: string, camel: string): string | undefined {
+  return asNonEmptyString(record[snake]) ?? asNonEmptyString(record[camel]);
+}
+
+function resolveExpiry(
+  record: Record<string, unknown>,
+  now: number,
+  relativeKeys: string[],
+  absoluteKeys: string[],
+): number | null {
+  for (const key of relativeKeys) {
+    const seconds = toFiniteInt(record[key]);
+    if (seconds !== null && seconds > 0) return now + seconds * 1000;
+  }
+  for (const key of absoluteKeys) {
+    const millis = toEpochMillis(record[key]);
+    if (millis !== null && millis > now) return millis;
+  }
+  return null;
+}
+
+function toEpochMillis(value: unknown): number | null {
+  const parsed = toFiniteInt(value);
+  if (parsed === null || parsed <= 0) return null;
+  return parsed < 1_000_000_000_000 ? parsed * 1000 : parsed;
+}
+
+function gatewayErrorFromPayload(payload: Record<string, unknown>): ScraperError | undefined {
+  const errorResponse = asRecord(payload["error_response"]) ?? asRecord(payload["error"]);
+  if (!errorResponse) return undefined;
+  const code = asNonEmptyString(errorResponse["code"]) ?? asNonEmptyString(errorResponse["error_code"]) ?? "UNKNOWN";
+  const msg = asNonEmptyString(errorResponse["msg"]) ?? asNonEmptyString(errorResponse["message"]) ?? "unknown provider error";
+  if (/InvalidCode|invalid.?code/i.test(`${code} ${msg}`)) {
+    return new ScraperError("INVALID_CODE", "AliExpress oauth authorization code was rejected");
+  }
+  if (/401|signature|invalid app|credential|IllegalAccessToken|access.?token/i.test(`${code} ${msg}`)) {
+    return new ScraperError("PROVIDER_AUTH_ERROR", "AliExpress oauth token endpoint rejected the request");
+  }
+  return new ScraperError("PROVIDER_API_ERROR", `AliExpress oauth token error ${code}`);
+}
+
+/** Keys and types only. Never includes token/secret values. */
+export function tokenPayloadShape(value: unknown, depth = 0): Record<string, unknown> {
+  if (depth > TOKEN_WALK_MAX_DEPTH) return { type: "truncated" };
+  if (value === null) return { type: "null" };
+  if (Array.isArray(value)) return { type: "array", length: value.length };
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        return { type: "json-string", nested: tokenPayloadShape(JSON.parse(trimmed), depth + 1) };
+      } catch {
+        return { type: "string", empty: trimmed.length === 0 };
+      }
+    }
+    return { type: "string", empty: trimmed.length === 0 };
+  }
+  if (typeof value !== "object") return { type: typeof value };
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  const fields: Record<string, unknown> = {};
+  for (const key of keys) {
+    const nested = record[key];
+    if (typeof nested === "object" && nested !== null) {
+      fields[key] = tokenPayloadShape(nested, depth + 1);
+    } else if (typeof nested === "string") {
+      const trimmed = nested.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        fields[key] = tokenPayloadShape(nested, depth + 1);
+      } else {
+        fields[key] = { type: "string", empty: trimmed.length === 0 };
+      }
+    } else {
+      fields[key] = { type: nested === null ? "null" : typeof nested };
+    }
+  }
+  return { type: "object", keys, fields };
 }
 
 function parseStoredToken(raw: string): AliExpressDsToken | undefined {
