@@ -12,6 +12,7 @@ import {
   persistAliExpressToken,
   refreshAliExpressToken,
   resolveAliExpressAccessToken,
+  tokenKeyPresence,
   tokenPayloadShape,
 } from "../../src/scrapers/aliexpress-oauth";
 import { DS_TOKEN_CREATE_PATH, DS_TOKEN_REFRESH_PATH, dsHmacSign } from "../../src/scrapers/aliexpress-sign";
@@ -192,6 +193,119 @@ describe("parseTokenCreatePayload", () => {
     expect(serialized).not.toContain(ACCESS_TOKEN);
     expect(serialized).not.toContain(REFRESH_TOKEN);
     expect(shape).toMatchObject({ type: "object" });
+  });
+
+  it("maps PascalCase AccessToken envelopes", () => {
+    const now = Date.UTC(2026, 8, 20, 0, 0, 0);
+    const token = parseTokenCreatePayload(
+      {
+        AccessToken: ACCESS_TOKEN,
+        RefreshToken: REFRESH_TOKEN,
+        ExpiresIn: 12,
+        RefreshExpiresIn: 24,
+        UserId: "7",
+        SellerId: "8",
+      },
+      now,
+    );
+    expect(token.accessToken).toBe(ACCESS_TOKEN);
+    expect(token.refreshToken).toBe(REFRESH_TOKEN);
+    expect(token.expiresAt).toBe(now + 12_000);
+    expect(token.refreshExpiresAt).toBe(now + 24_000);
+    expect(token.userId).toBe("7");
+    expect(token.sellerId).toBe("8");
+  });
+
+  it("maps gopResponseBody / array / double-encoded JSON envelopes", () => {
+    const now = Date.UTC(2026, 8, 20, 0, 0, 0);
+    const inner = {
+      access_token: ACCESS_TOKEN,
+      refresh_token: REFRESH_TOKEN,
+      expire_time: Math.floor((now + 60_000) / 1000),
+      refresh_token_valid_time: Math.floor((now + 120_000) / 1000),
+      havana_id: "555",
+      account_id: "666",
+    };
+    const fromGop = parseTokenCreatePayload({ gopResponseBody: inner }, now);
+    expect(fromGop.accessToken).toBe(ACCESS_TOKEN);
+    expect(fromGop.userId).toBe("555");
+    expect(fromGop.sellerId).toBe("666");
+    expect(fromGop.expiresAt).toBe(now + 60_000);
+    expect(fromGop.refreshExpiresAt).toBe(now + 120_000);
+
+    const fromArray = parseTokenCreatePayload({ result: [inner] }, now);
+    expect(fromArray.refreshToken).toBe(REFRESH_TOKEN);
+
+    const fromDoubleEncoded = parseTokenCreatePayload({ body: JSON.stringify(JSON.stringify(inner)) }, now);
+    expect(fromDoubleEncoded.accessToken).toBe(ACCESS_TOKEN);
+    expect(fromDoubleEncoded.refreshToken).toBe(REFRESH_TOKEN);
+  });
+
+  it("tokenKeyPresence reports missing keys without values", () => {
+    const presence = tokenKeyPresence({ expires_in: 10, extra: ACCESS_TOKEN });
+    expect(presence).toEqual({ accessToken: false, refreshToken: false });
+    expect(JSON.stringify(presence)).not.toContain(ACCESS_TOKEN);
+    expect(JSON.stringify(presence)).not.toContain(REFRESH_TOKEN);
+  });
+
+  it("maps unsuccessful gateway codes to PROVIDER_API_ERROR without leaking tokens", () => {
+    try {
+      parseTokenCreatePayload({ code: "15", message: "isp error", extra: ACCESS_TOKEN });
+      throw new Error("expected PROVIDER_API_ERROR");
+    } catch (err) {
+      expect((err as ScraperError).code).toBe("PROVIDER_API_ERROR");
+      expect((err as ScraperError).message).not.toContain(ACCESS_TOKEN);
+      expect((err as ScraperError).message).not.toContain(REFRESH_TOKEN);
+    }
+  });
+
+  it("still maps InvalidCode envelopes", () => {
+    try {
+      parseTokenCreatePayload({ error_response: { code: "InvalidCode", msg: "The code is invalid" } });
+      throw new Error("expected INVALID_CODE");
+    } catch (err) {
+      expect((err as ScraperError).code).toBe("INVALID_CODE");
+    }
+  });
+
+  it("maps gopErrorCode envelopes without leaking values", () => {
+    try {
+      parseTokenCreatePayload({ gopErrorCode: "IllegalAccessToken", gopErrorMsg: "token invalid", extra: ACCESS_TOKEN });
+      throw new Error("expected PROVIDER_AUTH_ERROR");
+    } catch (err) {
+      expect((err as ScraperError).code).toBe("PROVIDER_AUTH_ERROR");
+      expect((err as ScraperError).message).not.toContain(ACCESS_TOKEN);
+    }
+  });
+
+  it("maps hyphenated token keys", () => {
+    const now = Date.UTC(2026, 8, 20, 0, 0, 0);
+    const token = parseTokenCreatePayload(
+      { "access-token": ACCESS_TOKEN, "refresh-token": REFRESH_TOKEN, "expires-in": 9 },
+      now,
+    );
+    expect(token.accessToken).toBe(ACCESS_TOKEN);
+    expect(token.refreshToken).toBe(REFRESH_TOKEN);
+    expect(token.expiresAt).toBe(now + 9_000);
+  });
+
+  it("treats malformed nested JSON as INVALID_PAYLOAD without leaking values", () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+      logs.push(String(line));
+    });
+    try {
+      parseTokenCreatePayload({ body: `{access_token:${ACCESS_TOKEN}`, extra: REFRESH_TOKEN });
+      throw new Error("expected INVALID_PAYLOAD");
+    } catch (err) {
+      expect((err as ScraperError).code).toBe("INVALID_PAYLOAD");
+      expect((err as ScraperError).message).not.toContain(ACCESS_TOKEN);
+      expect((err as ScraperError).message).not.toContain(REFRESH_TOKEN);
+      expect(logs.join("\n")).not.toContain(ACCESS_TOKEN);
+      expect(logs.join("\n")).not.toContain(REFRESH_TOKEN);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
