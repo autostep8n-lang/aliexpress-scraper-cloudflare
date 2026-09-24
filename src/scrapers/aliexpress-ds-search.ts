@@ -14,6 +14,8 @@ import { DS_BUSINESS_ENDPOINT, DS_SIGN_METHOD, dsHmacSign, dsTimestamp, quoteJso
  */
 
 const SEARCH_METHOD = "aliexpress.ds.text.search";
+const DOTTED_RESPONSE_KEY = `${SEARCH_METHOD}_response`;
+const UNDERSCORE_RESPONSE_KEY = "aliexpress_ds_text_search_response";
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -204,10 +206,11 @@ export function parseDsTextSearchPayload(body: string): DsTextSearchResult {
   }
 
   const envelopeRecord = asRecord(envelope);
-  const dottedResponseKey = `${SEARCH_METHOD}_response`;
-  const underscoreResponseKey = `${SEARCH_METHOD.replace(/\./g, "_")}_response`;
+  logInfo("aliexpress.ds.text.search.response", dsTextSearchEnvelopeDiagnostic(envelopeRecord));
+  logInfo("aliexpress.ds.text.search.underscore_response", dsTextSearchUnderscoreResponseDiagnostic(envelopeRecord));
   const methodResponse =
-    asRecord(envelopeRecord?.[dottedResponseKey]) ?? asRecord(envelopeRecord?.[underscoreResponseKey]);
+    asRecord(envelopeRecord?.[DOTTED_RESPONSE_KEY]) ??
+    coerceDiagnosticRecord(envelopeRecord?.[UNDERSCORE_RESPONSE_KEY]);
   const errorResponse = asRecord(envelopeRecord?.["error_response"]);
   if (errorResponse) {
     throw mapProviderError(errorResponse);
@@ -218,9 +221,9 @@ export function parseDsTextSearchPayload(body: string): DsTextSearchResult {
     throw new ScraperError("NO_PRODUCT_DATA", "AliExpress Dropshipping text search carries no product payload");
   }
 
-  const result = asRecord(root["result"]) ?? root;
-  const data = asRecord(result["data"]) ?? result;
-  const productsRaw = data["products"] ?? result["products"];
+  const result = asRecord(root["result"]);
+  const data = asRecord(root["data"]) ?? asRecord(result?.["data"]) ?? result ?? root;
+  const productsRaw = data["products"] ?? result?.["products"] ?? root["products"];
   const products = extractProducts(productsRaw);
   if (!Array.isArray(productsRaw) && products.length === 0 && !asRecord(data)) {
     throw new ScraperError("NO_PRODUCT_DATA", "AliExpress Dropshipping text search carries no product payload");
@@ -229,10 +232,86 @@ export function parseDsTextSearchPayload(body: string): DsTextSearchResult {
   const total =
     toFiniteInt(data["total"]) ??
     toFiniteInt(data["totalCount"]) ??
-    toFiniteInt(result["total"]) ??
-    toFiniteInt(result["totalCount"]) ??
+    toFiniteInt(result?.["total"]) ??
+    toFiniteInt(result?.["totalCount"]) ??
     undefined;
   return total === undefined ? { products } : { products, total };
+}
+
+/** Envelope keys/flags only. Never includes token, secret, sign, or body values. */
+export function dsTextSearchEnvelopeDiagnostic(envelope: Record<string, unknown> | undefined): Record<string, unknown> {
+  const keys = envelope ? Object.keys(envelope) : [];
+  return {
+    keys,
+    hasDottedResponse: Boolean(envelope && DOTTED_RESPONSE_KEY in envelope),
+    hasUnderscoreResponse: Boolean(envelope && UNDERSCORE_RESPONSE_KEY in envelope),
+    hasErrorResponse: Boolean(envelope && "error_response" in envelope),
+  };
+}
+
+/**
+ * Keys/types inside `aliexpress_ds_text_search_response` only.
+ * Never includes token, secret, sign, product values, or the raw body.
+ */
+export function dsTextSearchUnderscoreResponseDiagnostic(
+  envelope: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const inner = coerceDiagnosticRecord(envelope?.[UNDERSCORE_RESPONSE_KEY]);
+  if (!inner) {
+    return { present: false };
+  }
+
+  const data = coerceDiagnosticRecord(inner["data"]);
+  const result = coerceDiagnosticRecord(inner["result"]);
+  const products = inner["products"] ?? data?.["products"] ?? result?.["products"];
+  const nested = {
+    result: objectKeys(inner["result"]),
+    items: objectKeys(inner["items"]) ?? objectKeys(data?.["items"]) ?? objectKeys(result?.["items"]),
+    products: objectKeys(inner["products"]) ?? objectKeys(data?.["products"]) ?? objectKeys(result?.["products"]),
+  };
+
+  return {
+    present: true,
+    keys: Object.keys(inner),
+    dataKeys: data ? Object.keys(data) : undefined,
+    resultKeys: result ? Object.keys(result) : undefined,
+    productsType: products === undefined ? undefined : diagnosticType(products),
+    ...(Array.isArray(products)
+      ? {
+          productsLength: products.length,
+          firstProductKeys: objectKeys(products[0]),
+        }
+      : {}),
+    nestedContainerKeys: {
+      ...(nested.result ? { result: nested.result } : {}),
+      ...(nested.items ? { items: nested.items } : {}),
+      ...(nested.products ? { products: nested.products } : {}),
+    },
+  };
+}
+
+function coerceDiagnosticRecord(value: unknown): Record<string, unknown> | undefined {
+  const direct = asRecord(value);
+  if (direct) return direct;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{")) return undefined;
+  try {
+    return asRecord(JSON.parse(trimmed));
+  } catch {
+    return undefined;
+  }
+}
+
+function objectKeys(value: unknown): string[] | undefined {
+  const record = coerceDiagnosticRecord(value);
+  return record ? Object.keys(record) : undefined;
+}
+
+function diagnosticType(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
 }
 
 function extractProducts(value: unknown): DsSearchProduct[] {

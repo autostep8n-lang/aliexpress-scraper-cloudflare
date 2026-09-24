@@ -5,6 +5,8 @@ import {
   dsCurrencyForCountry,
   dsLocalForCountry,
   dsSearchResponseDiagnostics,
+  dsTextSearchEnvelopeDiagnostic,
+  dsTextSearchUnderscoreResponseDiagnostic,
   parseDsTextSearchPayload,
   searchAliExpressDsText,
 } from "../../src/scrapers/aliexpress-ds-search";
@@ -104,6 +106,38 @@ describe("parseDsTextSearchPayload", () => {
     expect(parsed.total).toBe(2);
   });
 
+  it("falls back to aliexpress_ds_text_search_response when the dotted key is absent", () => {
+    const parsed = parseDsTextSearchPayload(
+      JSON.stringify({
+        aliexpress_ds_text_search_response: {
+          data: {
+            total: 2,
+            products: [
+              { itemId: ITEM_A, title: "Earbuds A" },
+              { product_id: ITEM_B, title: "Earbuds B" },
+            ],
+          },
+        },
+      }),
+    );
+    expect(parsed.products.map((p) => p.itemId)).toEqual([ITEM_A, ITEM_B]);
+    expect(parsed.total).toBe(2);
+  });
+
+  it("prefers the dotted response when both envelopes are present", () => {
+    const parsed = parseDsTextSearchPayload(
+      JSON.stringify({
+        "aliexpress.ds.text.search_response": {
+          result: { data: { products: [{ itemId: ITEM_A }] } },
+        },
+        aliexpress_ds_text_search_response: {
+          data: { products: [{ itemId: ITEM_B }] },
+        },
+      }),
+    );
+    expect(parsed.products.map((p) => p.itemId)).toEqual([ITEM_A]);
+  });
+
   it("maps IllegalAccessToken to PROVIDER_AUTH_ERROR", () => {
     try {
       parseDsTextSearchPayload(JSON.stringify({ error_response: { code: "IllegalAccessToken", msg: "expired" } }));
@@ -120,6 +154,107 @@ describe("parseDsTextSearchPayload", () => {
     } catch (err) {
       expect((err as ScraperError).code).toBe("PROVIDER_INVALID_RESPONSE");
     }
+  });
+
+  it("logs underscore-response keys/types without leaking credentials or changing parse results", () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+      logs.push(String(line));
+    });
+    const sign = "deadbeefsign";
+    const payload = {
+      access_token: ACCESS_TOKEN,
+      app_key: APP_KEY,
+      sign,
+      aliexpress_ds_text_search_response: {
+        code: "0",
+        data: {
+          totalCount: 1,
+          items: { page: 1 },
+          products: [{ product_id: ITEM_A, title: "Secret title", access_token: ACCESS_TOKEN }],
+        },
+        result: { pageSize: 20 },
+      },
+    };
+    try {
+      const parsed = parseDsTextSearchPayload(JSON.stringify(payload));
+      expect(parsed.products.map((p) => p.itemId)).toEqual([ITEM_A]);
+      const serialized = logs.join("\n");
+      expect(serialized).toContain("aliexpress.ds.text.search.response");
+      expect(serialized).toContain("aliexpress.ds.text.search.underscore_response");
+      expect(serialized).toContain("hasUnderscoreResponse");
+      expect(serialized).not.toContain(ACCESS_TOKEN);
+      expect(serialized).not.toContain(APP_KEY);
+      expect(serialized).not.toContain(APP_SECRET);
+      expect(serialized).not.toContain(sign);
+      expect(serialized).not.toContain("Secret title");
+      expect(serialized).not.toContain(ITEM_A);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("dsTextSearchUnderscoreResponseDiagnostic", () => {
+  it("reports keys, products type/length, and nested container keys without values", () => {
+    const diagnostic = dsTextSearchUnderscoreResponseDiagnostic({
+      access_token: ACCESS_TOKEN,
+      aliexpress_ds_text_search_response: {
+        data: {
+          total: 2,
+          products: [
+            { itemId: ITEM_A, title: "Earbuds A", access_token: ACCESS_TOKEN },
+            { itemId: ITEM_B, title: "Earbuds B" },
+          ],
+        },
+        result: { cursor: "next" },
+        items: { group: "hot" },
+      },
+    });
+    const serialized = JSON.stringify(diagnostic);
+    expect(diagnostic).toMatchObject({
+      present: true,
+      keys: expect.arrayContaining(["data", "result", "items"]),
+      dataKeys: expect.arrayContaining(["total", "products"]),
+      resultKeys: ["cursor"],
+      productsType: "array",
+      productsLength: 2,
+      firstProductKeys: expect.arrayContaining(["itemId", "title"]),
+      nestedContainerKeys: {
+        result: ["cursor"],
+        items: ["group"],
+      },
+    });
+    expect(serialized).not.toContain(ACCESS_TOKEN);
+    expect(serialized).not.toContain(APP_KEY);
+    expect(serialized).not.toContain(APP_SECRET);
+    expect(serialized).not.toContain(ITEM_A);
+    expect(serialized).not.toContain("Earbuds A");
+  });
+
+  it("reports present false without the underscore envelope", () => {
+    const diagnostic = dsTextSearchUnderscoreResponseDiagnostic({
+      "aliexpress.ds.text.search_response": { result: { data: { products: [] } } },
+    });
+    expect(diagnostic).toEqual({ present: false });
+  });
+
+  it("envelope diagnostic reports flags without credential values", () => {
+    const diagnostic = dsTextSearchEnvelopeDiagnostic({
+      access_token: ACCESS_TOKEN,
+      app_key: APP_KEY,
+      sign: "abc",
+      aliexpress_ds_text_search_response: { data: {} },
+    });
+    const serialized = JSON.stringify(diagnostic);
+    expect(diagnostic).toMatchObject({
+      hasDottedResponse: false,
+      hasUnderscoreResponse: true,
+      hasErrorResponse: false,
+    });
+    expect(serialized).not.toContain(ACCESS_TOKEN);
+    expect(serialized).not.toContain(APP_KEY);
+    expect(serialized).not.toContain("abc");
   });
 });
 
