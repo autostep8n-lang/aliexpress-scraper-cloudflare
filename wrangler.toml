@@ -39,9 +39,10 @@ crons = ["0 0 * * *"]
 [secrets]
 required = [ "SUPABASE_URL", "SUPABASE_SECRET_KEY" ]
 
-# --- Optional KV namespace for caching scraped results -----------------------
-# [kv_namespaces]
-# SCRAPE_CACHE = { id = "<namespace-id>" }
+# --- KV namespace for caching scraped results / OAuth token store -----------
+[[kv_namespaces]]
+binding = "SCRAPE_CACHE"
+id = "48f8df144fd1487a8ab324516665a342"
 
 # --- Optional R2 bucket for storing assets / raw HTML ------------------------
 # [r2_buckets]
