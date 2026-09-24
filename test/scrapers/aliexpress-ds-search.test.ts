@@ -4,6 +4,7 @@ import {
   dsCountryCode,
   dsCurrencyForCountry,
   dsLocalForCountry,
+  dsSearchResponseDiagnostics,
   parseDsTextSearchPayload,
   searchAliExpressDsText,
 } from "../../src/scrapers/aliexpress-ds-search";
@@ -122,6 +123,36 @@ describe("parseDsTextSearchPayload", () => {
   });
 });
 
+describe("dsSearchResponseDiagnostics", () => {
+  it("reports official underscore envelope keys without leaking secrets", () => {
+    const body = JSON.stringify({
+      code: "0",
+      aliexpress_ds_text_search_response: { data: { products: [] } },
+      access_token: ACCESS_TOKEN,
+    });
+    const fields = dsSearchResponseDiagnostics(200, body);
+    expect(fields.httpStatus).toBe(200);
+    expect(fields.bodyLength).toBe(body.length);
+    expect(fields.topLevelKeys).toEqual(["code", "aliexpress_ds_text_search_response", "access_token"]);
+    expect(fields.hasUnderscoreResponse).toBe(true);
+    expect(fields.hasDottedResponse).toBe(false);
+    expect(fields.hasErrorResponse).toBe(false);
+    expect(fields.providerCode).toBe("0");
+    expect(JSON.stringify(fields)).not.toContain(ACCESS_TOKEN);
+    expect(JSON.stringify(fields)).not.toContain(APP_SECRET);
+  });
+
+  it("reports error_response code and msg only", () => {
+    const fields = dsSearchResponseDiagnostics(
+      200,
+      JSON.stringify({ error_response: { code: "IllegalTimestamp", msg: "timestamp invalid" } }),
+    );
+    expect(fields.hasErrorResponse).toBe(true);
+    expect(fields.providerCode).toBe("IllegalTimestamp");
+    expect(fields.providerMsg).toBe("timestamp invalid");
+  });
+});
+
 describe("searchAliExpressDsText", () => {
   it("throws PROVIDER_CREDENTIALS_MISSING without secrets", async () => {
     try {
@@ -151,9 +182,19 @@ describe("searchAliExpressDsText", () => {
       return new Response(successBody(), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchStub);
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+      logs.push(String(line));
+    });
 
     const result = await searchAliExpressDsText(env, { keyWord: "earbuds", countryCode: "US", pageSize: 20 });
     expect(result.products).toHaveLength(2);
     expect(result.products[0]?.itemId).toBe(ITEM_A);
+    const joined = logs.join("\n");
+    expect(joined).toContain("aliexpress.ds.text.search.response");
+    expect(joined).not.toContain(ACCESS_TOKEN);
+    expect(joined).not.toContain(APP_SECRET);
+    expect(joined).not.toContain(APP_KEY);
+    spy.mockRestore();
   });
 });

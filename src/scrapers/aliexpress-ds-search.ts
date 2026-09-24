@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { logInfo } from "../logging";
 import { ScraperError } from "./types";
 import { openApiCredentials } from "./aliexpress-openapi-credentials";
 import { resolveAliExpressAccessToken } from "./aliexpress-oauth";
@@ -160,7 +161,38 @@ export async function searchAliExpressDsText(env: Env, query: DsTextSearchQuery)
   }
 
   const body = await response.text();
+  logInfo("aliexpress.ds.text.search.response", dsSearchResponseDiagnostics(response.status, body));
   return parseDsTextSearchPayload(body);
+}
+
+/** Temporary diagnostic fields only. Never includes tokens, secrets, sign, or request body. */
+export function dsSearchResponseDiagnostics(status: number, body: string): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    httpStatus: status,
+    bodyLength: body.length,
+    topLevelKeys: [],
+    hasUnderscoreResponse: false,
+    hasDottedResponse: false,
+    hasErrorResponse: false,
+  };
+  try {
+    const parsed: unknown = JSON.parse(body);
+    const record = asRecord(parsed);
+    if (!record) return fields;
+    const keys = Object.keys(record);
+    fields.topLevelKeys = keys;
+    fields.hasUnderscoreResponse = Object.prototype.hasOwnProperty.call(record, "aliexpress_ds_text_search_response");
+    fields.hasDottedResponse = Object.prototype.hasOwnProperty.call(record, "aliexpress.ds.text.search_response");
+    fields.hasErrorResponse = Object.prototype.hasOwnProperty.call(record, "error_response");
+    const errorResponse = asRecord(record["error_response"]);
+    const providerCode = asString(record["code"]) ?? asString(errorResponse?.["code"]);
+    const providerMsg = asString(record["msg"]) ?? asString(errorResponse?.["msg"]);
+    if (providerCode) fields.providerCode = providerCode;
+    if (providerMsg) fields.providerMsg = providerMsg;
+  } catch {
+    fields.parseableJson = false;
+  }
+  return fields;
 }
 
 export function parseDsTextSearchPayload(body: string): DsTextSearchResult {
