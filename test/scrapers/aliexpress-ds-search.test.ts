@@ -84,6 +84,25 @@ describe("parseDsTextSearchPayload", () => {
     expect(parsed.total).toBe(2);
   });
 
+  it("extracts itemIds from official underscore envelope aliexpress_ds_text_search_response.data.products", () => {
+    const parsed = parseDsTextSearchPayload(
+      JSON.stringify({
+        code: "0",
+        aliexpress_ds_text_search_response: {
+          data: {
+            totalCount: 2,
+            products: [
+              { itemId: ITEM_A, title: "Earbuds A" },
+              { itemId: ITEM_B, title: "Earbuds B" },
+            ],
+          },
+        },
+      }),
+    );
+    expect(parsed.products.map((p) => p.itemId)).toEqual([ITEM_A, ITEM_B]);
+    expect(parsed.total).toBe(2);
+  });
+
   it("maps IllegalAccessToken to PROVIDER_AUTH_ERROR", () => {
     try {
       parseDsTextSearchPayload(JSON.stringify({ error_response: { code: "IllegalAccessToken", msg: "expired" } }));

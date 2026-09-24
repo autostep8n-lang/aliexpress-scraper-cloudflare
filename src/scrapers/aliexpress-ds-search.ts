@@ -172,7 +172,10 @@ export function parseDsTextSearchPayload(body: string): DsTextSearchResult {
   }
 
   const envelopeRecord = asRecord(envelope);
-  const methodResponse = asRecord(envelopeRecord?.[`${SEARCH_METHOD}_response`]);
+  const dottedResponseKey = `${SEARCH_METHOD}_response`;
+  const underscoreResponseKey = `${SEARCH_METHOD.replace(/\./g, "_")}_response`;
+  const methodResponse =
+    asRecord(envelopeRecord?.[dottedResponseKey]) ?? asRecord(envelopeRecord?.[underscoreResponseKey]);
   const errorResponse = asRecord(envelopeRecord?.["error_response"]);
   if (errorResponse) {
     throw mapProviderError(errorResponse);
@@ -191,7 +194,12 @@ export function parseDsTextSearchPayload(body: string): DsTextSearchResult {
     throw new ScraperError("NO_PRODUCT_DATA", "AliExpress Dropshipping text search carries no product payload");
   }
 
-  const total = toFiniteInt(data["total"]) ?? toFiniteInt(result["total"]) ?? undefined;
+  const total =
+    toFiniteInt(data["total"]) ??
+    toFiniteInt(data["totalCount"]) ??
+    toFiniteInt(result["total"]) ??
+    toFiniteInt(result["totalCount"]) ??
+    undefined;
   return total === undefined ? { products } : { products, total };
 }
 
