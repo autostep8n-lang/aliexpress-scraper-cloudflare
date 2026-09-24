@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DS_TOKEN_CREATE_PATH, dsHmacSign, dsTimestamp } from "../../src/scrapers/aliexpress-sign";
+import { DS_TOKEN_CREATE_PATH, dsGopTimestamp, dsHmacSign, dsTimestamp } from "../../src/scrapers/aliexpress-sign";
 
 const SECRET = "test-app-secret";
 
@@ -28,6 +28,25 @@ describe("dsTimestamp", () => {
 
   it("rolls the date across midnight correctly", () => {
     expect(dsTimestamp(new Date("2026-08-25T17:00:00.000Z"))).toBe("2026-08-26 01:00:00");
+  });
+});
+
+describe("dsGopTimestamp", () => {
+  it("formats unix milliseconds as a decimal string", () => {
+    expect(dsGopTimestamp(new Date("2026-08-25T00:00:00.000Z"))).toBe("1787616000000");
+  });
+
+  it("is within 7200s of UTC when compared as unix seconds", () => {
+    const now = new Date("2026-08-25T12:34:56.789Z");
+    const gopMs = Number(dsGopTimestamp(now));
+    expect(gopMs).toBe(now.getTime());
+    expect(Math.abs(gopMs - now.getTime())).toBeLessThan(7200 * 1000);
+  });
+
+  it("is not a TOP UTC+8 datetime string", () => {
+    const now = new Date("2026-08-25T00:00:00.000Z");
+    expect(dsGopTimestamp(now)).not.toBe(dsTimestamp(now));
+    expect(dsGopTimestamp(now)).not.toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
   });
 });
 

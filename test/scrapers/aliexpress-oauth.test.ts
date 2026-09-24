@@ -351,6 +351,10 @@ describe("exchangeAliExpressAuthorizationCode", () => {
       expect(params.get("code")).toBe(AUTH_CODE);
       expect(params.get("app_key")).toBe(APP_KEY);
       expect(params.get("sign_method")).toBe("sha256");
+      const timestamp = params.get("timestamp") ?? "";
+      expect(timestamp).toMatch(/^\d{13}$/);
+      expect(Math.abs(Number(timestamp) - Date.now())).toBeLessThan(7200 * 1000);
+      expect(timestamp).not.toMatch(/^\d{4}-\d{2}-\d{2} /);
       const unsigned = Object.fromEntries([...params.entries()].filter(([key]) => key !== "sign"));
       expect(params.get("sign")).toBe(await dsHmacSign(APP_SECRET, unsigned, DS_TOKEN_CREATE_PATH));
       return jsonResponse({
@@ -408,6 +412,9 @@ describe("refreshAliExpressToken / resolveAliExpressAccessToken", () => {
         expect(href).toBe("https://api-sg.aliexpress.com/rest/auth/token/refresh");
         const params = new URLSearchParams(String(init?.body ?? ""));
         expect(params.get("refresh_token")).toBe(REFRESH_TOKEN);
+        const timestamp = params.get("timestamp") ?? "";
+        expect(timestamp).toMatch(/^\d{13}$/);
+        expect(Math.abs(Number(timestamp) - Date.now())).toBeLessThan(7200 * 1000);
         const unsigned = Object.fromEntries([...params.entries()].filter(([key]) => key !== "sign"));
         expect(params.get("sign")).toBe(await dsHmacSign(APP_SECRET, unsigned, DS_TOKEN_REFRESH_PATH));
         return jsonResponse({

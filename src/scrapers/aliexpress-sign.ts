@@ -19,12 +19,22 @@ export const DS_TOKEN_REFRESH_PATH = "/auth/token/refresh";
 
 const TIMESTAMP_TZ_OFFSET_HOURS = 8;
 
+/** TOP protocol: `yyyy-MM-dd HH:mm:ss` in UTC+8. Do not use on GOP `/rest` token APIs. */
 export function dsTimestamp(date = new Date()): string {
   const shifted = new Date(date.getTime() + TIMESTAMP_TZ_OFFSET_HOURS * 60 * 60 * 1000);
   const pad = (value: number): string => String(value).padStart(2, "0");
   return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())} ${pad(
     shifted.getUTCHours(),
   )}:${pad(shifted.getUTCMinutes())}:${pad(shifted.getUTCSeconds())}`;
+}
+
+/**
+ * GOP protocol timestamp for system `/rest` APIs (`/auth/token/create`, `/auth/token/refresh`).
+ * Official common-param docs: unix milliseconds, must be within 7200s of UTC.
+ * TOP UTC+8 datetimes are ~28800s off if the GOP gateway compares them to UTC (`IllegalTimestamp`).
+ */
+export function dsGopTimestamp(date = new Date()): string {
+  return String(date.getTime());
 }
 
 /** HMAC-SHA256 over optional system `apiPath` plus sorted params. Uppercase hex. */

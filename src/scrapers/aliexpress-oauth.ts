@@ -6,8 +6,8 @@ import {
   DS_SIGN_METHOD,
   DS_TOKEN_CREATE_PATH,
   DS_TOKEN_REFRESH_PATH,
+  dsGopTimestamp,
   dsHmacSign,
-  dsTimestamp,
   quoteJsonIntegerFields,
 } from "./aliexpress-sign";
 import { logInfo } from "../logging";
@@ -228,7 +228,7 @@ async function createAliExpressToken(appKey: string, appSecret: string, code: st
   const params: Record<string, string> = {
     code,
     app_key: appKey,
-    timestamp: dsTimestamp(),
+    timestamp: dsGopTimestamp(),
     sign_method: DS_SIGN_METHOD,
   };
   params["sign"] = await dsHmacSign(appSecret, params, DS_TOKEN_CREATE_PATH);
@@ -244,7 +244,7 @@ async function refreshAliExpressTokenWithSecret(
   const params: Record<string, string> = {
     refresh_token: refreshToken,
     app_key: appKey,
-    timestamp: dsTimestamp(),
+    timestamp: dsGopTimestamp(),
     sign_method: DS_SIGN_METHOD,
   };
   params["sign"] = await dsHmacSign(appSecret, params, DS_TOKEN_REFRESH_PATH);
