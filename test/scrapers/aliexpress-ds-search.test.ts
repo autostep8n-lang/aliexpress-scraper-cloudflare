@@ -138,6 +138,43 @@ describe("parseDsTextSearchPayload", () => {
     expect(parsed.products.map((p) => p.itemId)).toEqual([ITEM_A]);
   });
 
+  it("extracts itemIds from data.products.selection_search_product", () => {
+    const parsed = parseDsTextSearchPayload(
+      JSON.stringify({
+        aliexpress_ds_text_search_response: {
+          data: {
+            totalCount: 2,
+            products: {
+              selection_search_product: [
+                { itemId: ITEM_A, title: "Earbuds A" },
+                { product_id: ITEM_B, title: "Earbuds B" },
+              ],
+            },
+          },
+        },
+      }),
+    );
+    expect(parsed.products.map((p) => p.itemId)).toEqual([ITEM_A, ITEM_B]);
+    expect(parsed.total).toBe(2);
+  });
+
+  it("extracts a single selection_search_product object", () => {
+    const parsed = parseDsTextSearchPayload(
+      JSON.stringify({
+        "aliexpress.ds.text.search_response": {
+          result: {
+            data: {
+              products: {
+                selection_search_product: { itemId: ITEM_A, title: "Earbuds A" },
+              },
+            },
+          },
+        },
+      }),
+    );
+    expect(parsed.products.map((p) => p.itemId)).toEqual([ITEM_A]);
+  });
+
   it("maps IllegalAccessToken to PROVIDER_AUTH_ERROR", () => {
     try {
       parseDsTextSearchPayload(JSON.stringify({ error_response: { code: "IllegalAccessToken", msg: "expired" } }));

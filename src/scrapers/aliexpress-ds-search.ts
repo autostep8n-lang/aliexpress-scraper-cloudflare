@@ -315,10 +315,9 @@ function diagnosticType(value: unknown): string {
 }
 
 function extractProducts(value: unknown): DsSearchProduct[] {
-  if (!Array.isArray(value)) return [];
   const products: DsSearchProduct[] = [];
   const seen = new Set<string>();
-  for (const entry of value) {
+  for (const entry of productEntries(value)) {
     const record = asRecord(entry);
     if (!record) continue;
     const itemId =
@@ -328,6 +327,16 @@ function extractProducts(value: unknown): DsSearchProduct[] {
     products.push({ itemId, raw: record });
   }
   return products;
+}
+
+function productEntries(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  const record = asRecord(value);
+  if (!record) return [];
+  const nested = record["selection_search_product"];
+  if (Array.isArray(nested)) return nested;
+  if (asRecord(nested)) return [nested];
+  return [];
 }
 
 function mapProviderError(errorResponse: Record<string, unknown>): ScraperError {
