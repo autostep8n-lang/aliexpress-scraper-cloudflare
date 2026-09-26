@@ -142,12 +142,23 @@ describe("aliexpressDiscovery.discover", () => {
     server = createMockPostgrest();
     const env = await configuredEnv();
     vi.stubGlobal("fetch", dsFetch(server, { searchIds: [ITEM_A, ITEM_B], failGet: ITEM_A }));
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+      logs.push(String(line));
+    });
 
     const result = await aliexpressDiscovery.discover({ query: "earbuds", limit: 20 }, env, ctx);
     expect(result.discovered).toBe(2);
     expect(result.failed).toBe(1);
     expect(result.persisted).toBe(1);
     expect(result.created).toBe(1);
+    const joined = logs.join("\n");
+    expect(joined).toContain("aliexpress.discovery.enrichment_failed");
+    expect(joined).toContain("PROVIDER_API_ERROR");
+    expect(joined).not.toContain(ACCESS_TOKEN);
+    expect(joined).not.toContain(APP_SECRET);
+    expect(joined).not.toContain(APP_KEY);
+    spy.mockRestore();
   });
 
   it("honors limit", async () => {
