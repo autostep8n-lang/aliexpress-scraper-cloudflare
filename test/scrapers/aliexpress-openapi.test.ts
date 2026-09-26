@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   dsProductGetResponseDiagnostics,
+  dsProductGetSkuInfoDiagnostics,
   fetchAliExpressProductOpenApi,
   hasOpenApiCredentials,
   openApiSign,
@@ -237,6 +238,69 @@ describe("dsProductGetResponseDiagnostics", () => {
     const serialized = JSON.stringify(fields);
     expect(serialized).not.toContain(ITEM_ID);
     expect(serialized).not.toContain("Wireless Earbuds");
+    try {
+      parseOpenApiPayload(body, HINT);
+      throw new Error("expected NO_PRODUCT_DATA");
+    } catch (err) {
+      expect((err as ScraperError).code).toBe("NO_PRODUCT_DATA");
+    }
+  });
+});
+
+describe("dsProductGetSkuInfoDiagnostics", () => {
+  it("reports SKU container keys and types only and does not change parse behavior", () => {
+    const body = JSON.stringify({
+      aliexpress_ds_product_get_response: {
+        result: {
+          ae_item_sku_info_dtos: {
+            ae_item_sku_info_d_t_o: [
+              {
+                sku_price: "9.99",
+                offer_sale_price: "8.50",
+                currency_code: "USD",
+                sku_id: "1234567890123",
+                ae_sku_property_d_t_o: [{ sku_property_name: "Color", sku_property_value: "Black" }],
+              },
+            ],
+          },
+        },
+      },
+    });
+    const fields = dsProductGetSkuInfoDiagnostics(body);
+    expect(fields.present).toBe(true);
+    expect(fields.type).toBe("object");
+    expect(fields.keys).toEqual(["ae_item_sku_info_d_t_o"]);
+    expect(fields.nestedContainerKeys).toEqual({ ae_item_sku_info_d_t_o: ["length:1"] });
+    expect(fields.nestedContainerTypes).toEqual({ ae_item_sku_info_d_t_o: "array" });
+    expect(fields.firstSkuKeys).toEqual([
+      "sku_price",
+      "offer_sale_price",
+      "currency_code",
+      "sku_id",
+      "ae_sku_property_d_t_o",
+    ]);
+    expect(fields.skuFields).toMatchObject({
+      sku_price: { present: true, type: "string" },
+      offer_sale_price: { present: true, type: "string" },
+      offer_bulk_sale_price: { present: false },
+      currency_code: { present: true, type: "string" },
+      sku_available_stock: { present: false },
+      sku_stock: { present: false },
+      id: { present: false },
+      sku_id: { present: true, type: "string" },
+      ae_sku_property_d_t_o: { present: true, type: "array", length: 1 },
+    });
+    expect(fields.aeSkuPropertyDto).toMatchObject({
+      type: "array",
+      length: 1,
+      firstKeys: ["sku_property_name", "sku_property_value"],
+      firstTypes: { sku_property_name: "string", sku_property_value: "string" },
+    });
+    const serialized = JSON.stringify(fields);
+    expect(serialized).not.toContain("9.99");
+    expect(serialized).not.toContain("8.50");
+    expect(serialized).not.toContain("1234567890123");
+    expect(serialized).not.toContain("Black");
     try {
       parseOpenApiPayload(body, HINT);
       throw new Error("expected NO_PRODUCT_DATA");

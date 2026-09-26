@@ -95,6 +95,7 @@ export async function fetchAliExpressProductOpenApi(
 
   const body = await response.text();
   logInfo("aliexpress.ds.product.get.response", dsProductGetResponseDiagnostics(response.status, body));
+  logInfo("aliexpress.ds.product.get.sku_info", dsProductGetSkuInfoDiagnostics(body));
   return parseOpenApiPayload(body, { url, itemId });
 }
 
@@ -239,6 +240,124 @@ export function dsProductGetResponseDiagnostics(status: number, body: string): R
     fields.parseableJson = false;
   }
   return fields;
+}
+
+const SKU_DTO_KEY = "ae_item_sku_info_dtos";
+const SKU_FIELD_NAMES = [
+  "sku_price",
+  "offer_sale_price",
+  "offer_bulk_sale_price",
+  "currency_code",
+  "sku_available_stock",
+  "sku_stock",
+  "id",
+  "sku_id",
+  "ae_sku_property_d_t_o",
+] as const;
+
+/** Temporary SKU-container diagnostic. Keys/types/counts only; never SKU values, prices, or IDs. */
+export function dsProductGetSkuInfoDiagnostics(body: string): Record<string, unknown> {
+  const fields: Record<string, unknown> = { present: false };
+  try {
+    const parsed: unknown = JSON.parse(body);
+    const record = asRecord(parsed);
+    if (!record) return fields;
+    const selected =
+      coerceDiagnosticRecord(record[DOTTED_RESPONSE_KEY]) ?? coerceDiagnosticRecord(record[UNDERSCORE_RESPONSE_KEY]);
+    const result = coerceDiagnosticRecord(selected?.["result"]);
+    if (!result || !Object.prototype.hasOwnProperty.call(result, SKU_DTO_KEY)) return fields;
+
+    const skuInfo = result[SKU_DTO_KEY];
+    fields.present = true;
+    fields.type = diagnosticType(skuInfo);
+    const skuRecord = coerceDiagnosticRecord(skuInfo);
+    if (skuRecord) fields.keys = Object.keys(skuRecord);
+    if (Array.isArray(skuInfo)) fields.length = skuInfo.length;
+
+    const nestedContainerKeys: Record<string, string[]> = {};
+    const nestedContainerTypes: Record<string, string> = {};
+    if (skuRecord) {
+      for (const key of Object.keys(skuRecord)) {
+        nestedContainerTypes[key] = diagnosticType(skuRecord[key]);
+        const keys = objectKeys(skuRecord[key]);
+        if (keys) nestedContainerKeys[key] = keys;
+        else if (Array.isArray(skuRecord[key])) nestedContainerKeys[key] = [`length:${skuRecord[key].length}`];
+      }
+    }
+    fields.nestedContainerKeys = nestedContainerKeys;
+    fields.nestedContainerTypes = nestedContainerTypes;
+
+    const firstSku = firstSkuObject(skuInfo);
+    if (!firstSku) return fields;
+    fields.firstSkuKeys = Object.keys(firstSku);
+    const firstSkuTypes: Record<string, string> = {};
+    for (const key of Object.keys(firstSku)) firstSkuTypes[key] = diagnosticType(firstSku[key]);
+    fields.firstSkuTypes = firstSkuTypes;
+
+    const skuFields: Record<string, unknown> = {};
+    for (const name of SKU_FIELD_NAMES) {
+      if (!Object.prototype.hasOwnProperty.call(firstSku, name)) {
+        skuFields[name] = { present: false };
+        continue;
+      }
+      const value = firstSku[name];
+      const summary: Record<string, unknown> = { present: true, type: diagnosticType(value) };
+      if (Array.isArray(value)) summary.length = value.length;
+      const keys = objectKeys(value);
+      if (keys) summary.keyCount = keys.length;
+      skuFields[name] = summary;
+    }
+    fields.skuFields = skuFields;
+
+    if (Object.prototype.hasOwnProperty.call(firstSku, "ae_sku_property_d_t_o")) {
+      fields.aeSkuPropertyDto = skuPropertyDiagnostic(firstSku["ae_sku_property_d_t_o"]);
+    }
+  } catch {
+    fields.parseableJson = false;
+  }
+  return fields;
+}
+
+function firstSkuObject(value: unknown): Record<string, unknown> | undefined {
+  if (Array.isArray(value)) return asRecord(value[0]);
+  const record = coerceDiagnosticRecord(value);
+  if (!record) return undefined;
+  for (const nested of Object.values(record)) {
+    if (Array.isArray(nested)) return asRecord(nested[0]);
+  }
+  if (SKU_FIELD_NAMES.some((name) => Object.prototype.hasOwnProperty.call(record, name))) return record;
+  for (const nested of Object.values(record)) {
+    const nestedRecord = coerceDiagnosticRecord(nested);
+    if (nestedRecord && SKU_FIELD_NAMES.some((name) => Object.prototype.hasOwnProperty.call(nestedRecord, name))) {
+      return nestedRecord;
+    }
+  }
+  return undefined;
+}
+
+function skuPropertyDiagnostic(value: unknown): Record<string, unknown> {
+  const summary: Record<string, unknown> = { type: diagnosticType(value) };
+  if (Array.isArray(value)) {
+    summary.length = value.length;
+    const first = asRecord(value[0]);
+    if (first) {
+      summary.firstKeys = Object.keys(first);
+      const firstTypes: Record<string, string> = {};
+      for (const key of Object.keys(first)) firstTypes[key] = diagnosticType(first[key]);
+      summary.firstTypes = firstTypes;
+    }
+    return summary;
+  }
+  const record = coerceDiagnosticRecord(value);
+  if (!record) return summary;
+  summary.keys = Object.keys(record);
+  const types: Record<string, string> = {};
+  for (const key of Object.keys(record)) {
+    types[key] = diagnosticType(record[key]);
+    if (Array.isArray(record[key])) summary[`${key}Length`] = record[key].length;
+  }
+  summary.types = types;
+  return summary;
 }
 
 function coerceDiagnosticRecord(value: unknown): Record<string, unknown> | undefined {
