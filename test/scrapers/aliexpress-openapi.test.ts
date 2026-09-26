@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  dsProductGetResponseDiagnostics,
   fetchAliExpressProductOpenApi,
   hasOpenApiCredentials,
   openApiSign,
@@ -207,6 +208,40 @@ describe("parseOpenApiPayload", () => {
     } catch (err) {
       const typed = err as ScraperError;
       expect(typed.code).toBe("PROVIDER_INVALID_RESPONSE");
+    }
+  });
+});
+
+describe("dsProductGetResponseDiagnostics", () => {
+  it("reports keys and types only and does not change parse behavior", () => {
+    const body = JSON.stringify({
+      aliexpress_ds_product_get_response: {
+        result: {
+          ae_item_base_info_dto: { product_id: ITEM_ID, subject: "Wireless Earbuds" },
+        },
+      },
+    });
+    const fields = dsProductGetResponseDiagnostics(200, body);
+    expect(fields.httpStatus).toBe(200);
+    expect(fields.topLevelKeys).toEqual(["aliexpress_ds_product_get_response"]);
+    expect(fields.hasDottedResponse).toBe(false);
+    expect(fields.hasUnderscoreResponse).toBe(true);
+    expect(fields.hasErrorResponse).toBe(false);
+    expect(fields.selectedEnvelope).toBe("underscore");
+    expect(fields.envelopeKeys).toEqual(["result"]);
+    expect(fields.resultKeys).toEqual(["ae_item_base_info_dto"]);
+    expect(fields.hasProductDetailModel).toBe(false);
+    expect(fields.productContainers).toMatchObject({
+      ae_item_base_info_dto: { type: "object", keyCount: 2 },
+    });
+    const serialized = JSON.stringify(fields);
+    expect(serialized).not.toContain(ITEM_ID);
+    expect(serialized).not.toContain("Wireless Earbuds");
+    try {
+      parseOpenApiPayload(body, HINT);
+      throw new Error("expected NO_PRODUCT_DATA");
+    } catch (err) {
+      expect((err as ScraperError).code).toBe("NO_PRODUCT_DATA");
     }
   });
 });

@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { logInfo } from "../logging";
 import type { AliExpressParsedProduct, AliExpressPrice } from "./aliexpress-parser";
 import { ScraperError } from "./types";
 import { md5 } from "../utils/md5";
@@ -23,6 +24,8 @@ import { DS_BUSINESS_ENDPOINT, DS_SIGN_METHOD, dsHmacSign, dsTimestamp } from ".
  */
 
 const OPEN_API_METHOD = "aliexpress.ds.product.get";
+const DOTTED_RESPONSE_KEY = `${OPEN_API_METHOD}_response`;
+const UNDERSCORE_RESPONSE_KEY = "aliexpress_ds_product_get_response";
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -91,6 +94,7 @@ export async function fetchAliExpressProductOpenApi(
   }
 
   const body = await response.text();
+  logInfo("aliexpress.ds.product.get.response", dsProductGetResponseDiagnostics(response.status, body));
   return parseOpenApiPayload(body, { url, itemId });
 }
 
@@ -108,7 +112,7 @@ export function parseOpenApiPayload(body: string, hint: { url: URL; itemId: stri
   }
 
   const envelopeRecord = asRecord(envelope);
-  const methodResponse = asRecord(envelopeRecord?.[`${OPEN_API_METHOD}_response`]);
+  const methodResponse = asRecord(envelopeRecord?.[DOTTED_RESPONSE_KEY]);
   const errorResponse = asRecord(envelopeRecord?.["error_response"]);
   if (errorResponse) {
     const code = asString(errorResponse["code"]) ?? "UNKNOWN";
@@ -130,6 +134,135 @@ export function parseOpenApiPayload(body: string, hint: { url: URL; itemId: stri
   }
 
   return mapOpenApiResult(result, hint);
+}
+
+const LIKELY_PRODUCT_CONTAINERS = [
+  "productDetailModel",
+  "product",
+  "products",
+  "productInfo",
+  "product_info",
+  "item",
+  "items",
+  "sku",
+  "skus",
+  "ae_item_base_info_dto",
+  "ae_item_sku_info_dtos",
+  "ae_multimedia_info_dto",
+  "ae_item_property_info_dtos",
+] as const;
+
+/** Temporary diagnostic fields only. Never includes tokens, secrets, sign, product values, or raw body. */
+export function dsProductGetResponseDiagnostics(status: number, body: string): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    httpStatus: status,
+    topLevelKeys: [],
+    hasDottedResponse: false,
+    hasUnderscoreResponse: false,
+    hasErrorResponse: false,
+  };
+  try {
+    const parsed: unknown = JSON.parse(body);
+    const record = asRecord(parsed);
+    if (!record) return fields;
+    fields.topLevelKeys = Object.keys(record);
+    fields.hasDottedResponse = Object.prototype.hasOwnProperty.call(record, DOTTED_RESPONSE_KEY);
+    fields.hasUnderscoreResponse = Object.prototype.hasOwnProperty.call(record, UNDERSCORE_RESPONSE_KEY);
+    fields.hasErrorResponse = Object.prototype.hasOwnProperty.call(record, "error_response");
+
+    const dotted = coerceDiagnosticRecord(record[DOTTED_RESPONSE_KEY]);
+    const underscore = coerceDiagnosticRecord(record[UNDERSCORE_RESPONSE_KEY]);
+    const selected = dotted ?? underscore;
+    fields.selectedEnvelope = dotted ? "dotted" : underscore ? "underscore" : "none";
+    if (!selected) return fields;
+
+    fields.envelopeKeys = Object.keys(selected);
+    const result = coerceDiagnosticRecord(selected["result"]);
+    const data = coerceDiagnosticRecord(selected["data"]);
+    fields.resultKeys = result ? Object.keys(result) : undefined;
+    fields.dataKeys = data ? Object.keys(data) : undefined;
+    fields.resultType = selected["result"] === undefined ? undefined : diagnosticType(selected["result"]);
+    fields.dataType = selected["data"] === undefined ? undefined : diagnosticType(selected["data"]);
+
+    const nestedContainerKeys: Record<string, string[]> = {};
+    const nestedContainerTypes: Record<string, string> = {};
+    for (const key of Object.keys(selected)) {
+      nestedContainerTypes[key] = diagnosticType(selected[key]);
+      const keys = objectKeys(selected[key]);
+      if (keys) nestedContainerKeys[key] = keys;
+      else if (Array.isArray(selected[key])) nestedContainerKeys[key] = [`length:${selected[key].length}`];
+    }
+    if (result) {
+      for (const key of Object.keys(result)) {
+        const nestedKey = `result.${key}`;
+        nestedContainerTypes[nestedKey] = diagnosticType(result[key]);
+        const keys = objectKeys(result[key]);
+        if (keys) nestedContainerKeys[nestedKey] = keys;
+        else if (Array.isArray(result[key])) nestedContainerKeys[nestedKey] = [`length:${result[key].length}`];
+      }
+    }
+    if (data) {
+      for (const key of Object.keys(data)) {
+        const nestedKey = `data.${key}`;
+        nestedContainerTypes[nestedKey] = diagnosticType(data[key]);
+        const keys = objectKeys(data[key]);
+        if (keys) nestedContainerKeys[nestedKey] = keys;
+        else if (Array.isArray(data[key])) nestedContainerKeys[nestedKey] = [`length:${data[key].length}`];
+      }
+    }
+    fields.nestedContainerKeys = nestedContainerKeys;
+    fields.nestedContainerTypes = nestedContainerTypes;
+
+    const productDetailModel = selected["productDetailModel"] ?? result?.["productDetailModel"] ?? data?.["productDetailModel"];
+    fields.hasProductDetailModel = productDetailModel !== undefined;
+    fields.productDetailModelType = productDetailModel === undefined ? undefined : diagnosticType(productDetailModel);
+    const productDetailModelKeys = objectKeys(productDetailModel);
+    if (productDetailModelKeys) fields.productDetailModelKeyCount = productDetailModelKeys.length;
+    if (Array.isArray(productDetailModel)) fields.productDetailModelLength = productDetailModel.length;
+
+    const productContainers: Record<string, unknown> = {};
+    const sources: Array<Record<string, unknown> | undefined> = [selected, result, data];
+    for (const name of LIKELY_PRODUCT_CONTAINERS) {
+      for (const source of sources) {
+        if (!source || !Object.prototype.hasOwnProperty.call(source, name)) continue;
+        const value = source[name];
+        const summary: Record<string, unknown> = { type: diagnosticType(value) };
+        if (Array.isArray(value)) summary.length = value.length;
+        const keys = objectKeys(value);
+        if (keys) summary.keyCount = keys.length;
+        productContainers[name] = summary;
+        break;
+      }
+    }
+    fields.productContainers = productContainers;
+  } catch {
+    fields.parseableJson = false;
+  }
+  return fields;
+}
+
+function coerceDiagnosticRecord(value: unknown): Record<string, unknown> | undefined {
+  const direct = asRecord(value);
+  if (direct) return direct;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{")) return undefined;
+  try {
+    return asRecord(JSON.parse(trimmed));
+  } catch {
+    return undefined;
+  }
+}
+
+function objectKeys(value: unknown): string[] | undefined {
+  const record = coerceDiagnosticRecord(value);
+  return record ? Object.keys(record) : undefined;
+}
+
+function diagnosticType(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
 }
 
 /** Legacy MD5 signature. Not used by official DS HMAC-SHA256 calls. */
