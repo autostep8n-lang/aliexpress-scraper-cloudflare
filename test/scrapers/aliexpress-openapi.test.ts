@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  dsProductGetResponseDiagnostics,
-  dsProductGetSkuInfoDiagnostics,
   fetchAliExpressProductOpenApi,
   hasOpenApiCredentials,
   openApiSign,
@@ -66,6 +64,70 @@ function successBody(): string {
 
 function errorBody(code: string, msg: string): string {
   return JSON.stringify({ error_response: { code, msg } });
+}
+
+function dsSuccessBody(overrides: {
+  subject?: string;
+  productId?: string;
+  baseCurrency?: string;
+  skus?: Array<Record<string, unknown>>;
+  imageUrls?: unknown;
+  properties?: unknown;
+  storeName?: string;
+  ratingAverage?: unknown;
+  ratingCount?: unknown;
+} = {}): string {
+  const skuList =
+    overrides.skus ??
+    [
+      {
+        sku_price: "9.99",
+        offer_sale_price: "8.50",
+        currency_code: "USD",
+        sku_available_stock: 12,
+        sku_id: "111",
+        id: "111",
+        sku_attr: "14:350850",
+        ae_sku_property_dtos: {},
+      },
+    ];
+  return JSON.stringify({
+    aliexpress_ds_product_get_response: {
+      result: {
+        ae_item_base_info_dto: {
+          product_id: overrides.productId ?? ITEM_ID,
+          subject: overrides.subject ?? "Wireless Earbuds Test Title",
+          currency_code: overrides.baseCurrency ?? "EUR",
+          avg_evaluation_rating: overrides.ratingAverage ?? "4.6",
+          evaluation_count: overrides.ratingCount ?? "18",
+        },
+        ae_item_sku_info_dtos: {
+          ae_item_sku_info_d_t_o: skuList,
+        },
+        ae_multimedia_info_dto: {
+          image_urls:
+            overrides.imageUrls ?? [
+              "https://example.test/a.jpg",
+              "https://example.test/b.jpg",
+            ],
+        },
+        ae_store_info: {
+          store_name: overrides.storeName ?? "Example Store",
+        },
+        ae_item_properties: {
+          ae_item_property:
+            overrides.properties ?? [
+              { attr_name: "Brand", attr_value: "SoundCore" },
+              { attr_name: "Material", attr_value: "ABS" },
+            ],
+        },
+        package_info_dto: {},
+        logistics_info_dto: {},
+        product_id_converter_result: {},
+        has_whole_sale: false,
+      },
+    },
+  });
 }
 
 async function envWithToken(): Promise<Env> {
@@ -211,101 +273,95 @@ describe("parseOpenApiPayload", () => {
       expect(typed.code).toBe("PROVIDER_INVALID_RESPONSE");
     }
   });
-});
 
-describe("dsProductGetResponseDiagnostics", () => {
-  it("reports keys and types only and does not change parse behavior", () => {
-    const body = JSON.stringify({
-      aliexpress_ds_product_get_response: {
-        result: {
-          ae_item_base_info_dto: { product_id: ITEM_ID, subject: "Wireless Earbuds" },
-        },
-      },
-    });
-    const fields = dsProductGetResponseDiagnostics(200, body);
-    expect(fields.httpStatus).toBe(200);
-    expect(fields.topLevelKeys).toEqual(["aliexpress_ds_product_get_response"]);
-    expect(fields.hasDottedResponse).toBe(false);
-    expect(fields.hasUnderscoreResponse).toBe(true);
-    expect(fields.hasErrorResponse).toBe(false);
-    expect(fields.selectedEnvelope).toBe("underscore");
-    expect(fields.envelopeKeys).toEqual(["result"]);
-    expect(fields.resultKeys).toEqual(["ae_item_base_info_dto"]);
-    expect(fields.hasProductDetailModel).toBe(false);
-    expect(fields.productContainers).toMatchObject({
-      ae_item_base_info_dto: { type: "object", keyCount: 2 },
-    });
-    const serialized = JSON.stringify(fields);
-    expect(serialized).not.toContain(ITEM_ID);
-    expect(serialized).not.toContain("Wireless Earbuds");
+  it("maps the underscore DS envelope into the normalize-ready shape", () => {
+    const parsed = parseOpenApiPayload(dsSuccessBody(), HINT);
+    expect(parsed.itemId).toBe(ITEM_ID);
+    expect(parsed.title).toBe("Wireless Earbuds Test Title");
+    expect(parsed.price).toEqual({ amount: 8.5, currency: "USD", originalAmount: 9.99 });
+    expect(parsed.images).toEqual([{ url: "https://example.test/a.jpg" }, { url: "https://example.test/b.jpg" }]);
+    expect(parsed.seller).toBe("Example Store");
+    expect(parsed.brand).toBe("SoundCore");
+    expect(parsed.attributes["Material"]).toBe("ABS");
+    expect(parsed.rating).toEqual({ average: 4.6, count: 18 });
+  });
+
+  it("prefers SKU offer_sale_price and falls back to sku_price", () => {
+    const preferred = parseOpenApiPayload(dsSuccessBody(), HINT);
+    expect(preferred.price.amount).toBe(8.5);
+    const fallback = parseOpenApiPayload(
+      dsSuccessBody({
+        skus: [{ sku_price: "9.99", currency_code: "USD" }],
+      }),
+      HINT,
+    );
+    expect(fallback.price).toEqual({ amount: 9.99, currency: "USD" });
+  });
+
+  it("uses the first SKU with a parseable sale price", () => {
+    const parsed = parseOpenApiPayload(
+      dsSuccessBody({
+        skus: [
+          { offer_sale_price: "", sku_price: "", currency_code: "USD" },
+          { offer_sale_price: "3.21", currency_code: "USD" },
+        ],
+      }),
+      HINT,
+    );
+    expect(parsed.price.amount).toBe(3.21);
+  });
+
+  it("falls back to base_info currency_code when SKU currency is missing", () => {
+    const parsed = parseOpenApiPayload(
+      dsSuccessBody({
+        baseCurrency: "EUR",
+        skus: [{ offer_sale_price: "8.50" }],
+      }),
+      HINT,
+    );
+    expect(parsed.price.currency).toBe("EUR");
+  });
+
+  it("splits semicolon-separated image_urls", () => {
+    const parsed = parseOpenApiPayload(
+      dsSuccessBody({ imageUrls: "https://example.test/a.jpg;https://example.test/b.jpg" }),
+      HINT,
+    );
+    expect(parsed.images).toEqual([{ url: "https://example.test/a.jpg" }, { url: "https://example.test/b.jpg" }]);
+  });
+
+  it("maps a single ae_item_property object using name/value fallbacks", () => {
+    const parsed = parseOpenApiPayload(
+      dsSuccessBody({ properties: { name: "Color", value: "Black" } }),
+      HINT,
+    );
+    expect(parsed.attributes["Color"]).toBe("Black");
+  });
+
+  it("keeps dotted productDetailModel mapping unchanged", () => {
+    const parsed = parseOpenApiPayload(successBody(), HINT);
+    expect(parsed.title).toBe("Portable Hair Straightener Comb 2600mAh");
+    expect(parsed.price).toEqual({ amount: 3.43, currency: "USD", originalAmount: 7.46 });
+    expect(parsed.seller).toBe("Shop1103920178 Store");
+  });
+
+  it("throws NO_PRODUCT_DATA when DS subject is missing", () => {
     try {
-      parseOpenApiPayload(body, HINT);
+      parseOpenApiPayload(dsSuccessBody({ subject: "" }), HINT);
       throw new Error("expected NO_PRODUCT_DATA");
     } catch (err) {
       expect((err as ScraperError).code).toBe("NO_PRODUCT_DATA");
+      expect((err as ScraperError).message).toBe("AliExpress Open Platform response is missing a product title");
     }
   });
-});
 
-describe("dsProductGetSkuInfoDiagnostics", () => {
-  it("reports SKU container keys and types only and does not change parse behavior", () => {
-    const body = JSON.stringify({
-      aliexpress_ds_product_get_response: {
-        result: {
-          ae_item_sku_info_dtos: {
-            ae_item_sku_info_d_t_o: [
-              {
-                sku_price: "9.99",
-                offer_sale_price: "8.50",
-                currency_code: "USD",
-                sku_id: "1234567890123",
-                ae_sku_property_d_t_o: [{ sku_property_name: "Color", sku_property_value: "Black" }],
-              },
-            ],
-          },
-        },
-      },
-    });
-    const fields = dsProductGetSkuInfoDiagnostics(body);
-    expect(fields.present).toBe(true);
-    expect(fields.type).toBe("object");
-    expect(fields.keys).toEqual(["ae_item_sku_info_d_t_o"]);
-    expect(fields.nestedContainerKeys).toEqual({ ae_item_sku_info_d_t_o: ["length:1"] });
-    expect(fields.nestedContainerTypes).toEqual({ ae_item_sku_info_d_t_o: "array" });
-    expect(fields.firstSkuKeys).toEqual([
-      "sku_price",
-      "offer_sale_price",
-      "currency_code",
-      "sku_id",
-      "ae_sku_property_d_t_o",
-    ]);
-    expect(fields.skuFields).toMatchObject({
-      sku_price: { present: true, type: "string" },
-      offer_sale_price: { present: true, type: "string" },
-      offer_bulk_sale_price: { present: false },
-      currency_code: { present: true, type: "string" },
-      sku_available_stock: { present: false },
-      sku_stock: { present: false },
-      id: { present: false },
-      sku_id: { present: true, type: "string" },
-      ae_sku_property_d_t_o: { present: true, type: "array", length: 1 },
-    });
-    expect(fields.aeSkuPropertyDto).toMatchObject({
-      type: "array",
-      length: 1,
-      firstKeys: ["sku_property_name", "sku_property_value"],
-      firstTypes: { sku_property_name: "string", sku_property_value: "string" },
-    });
-    const serialized = JSON.stringify(fields);
-    expect(serialized).not.toContain("9.99");
-    expect(serialized).not.toContain("8.50");
-    expect(serialized).not.toContain("1234567890123");
-    expect(serialized).not.toContain("Black");
+  it("throws NO_PRODUCT_DATA when no SKU has a parseable price", () => {
     try {
-      parseOpenApiPayload(body, HINT);
+      parseOpenApiPayload(dsSuccessBody({ skus: [{ offer_sale_price: "", sku_price: "" }] }), HINT);
       throw new Error("expected NO_PRODUCT_DATA");
     } catch (err) {
       expect((err as ScraperError).code).toBe("NO_PRODUCT_DATA");
+      expect((err as ScraperError).message).toBe("AliExpress Open Platform response is missing a price");
     }
   });
 });

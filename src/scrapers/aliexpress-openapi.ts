@@ -1,5 +1,4 @@
 import type { Env } from "../env";
-import { logInfo } from "../logging";
 import type { AliExpressParsedProduct, AliExpressPrice } from "./aliexpress-parser";
 import { ScraperError } from "./types";
 import { md5 } from "../utils/md5";
@@ -94,15 +93,14 @@ export async function fetchAliExpressProductOpenApi(
   }
 
   const body = await response.text();
-  logInfo("aliexpress.ds.product.get.response", dsProductGetResponseDiagnostics(response.status, body));
-  logInfo("aliexpress.ds.product.get.sku_info", dsProductGetSkuInfoDiagnostics(body));
   return parseOpenApiPayload(body, { url, itemId });
 }
 
 /**
  * Maps an Open Platform `aliexpress.ds.product.get` response into the parser's
- * normalize-ready shape. Exported for tests; the payload shape follows the
- * documented `productDetailModel` contract.
+ * normalize-ready shape. Supports the production underscore envelope
+ * (`aliexpress_ds_product_get_response.result`) and the dotted
+ * `productDetailModel` contract.
  */
 export function parseOpenApiPayload(body: string, hint: { url: URL; itemId: string }): AliExpressParsedProduct {
   let envelope: unknown;
@@ -113,7 +111,8 @@ export function parseOpenApiPayload(body: string, hint: { url: URL; itemId: stri
   }
 
   const envelopeRecord = asRecord(envelope);
-  const methodResponse = asRecord(envelopeRecord?.[DOTTED_RESPONSE_KEY]);
+  const methodResponse =
+    asRecord(envelopeRecord?.[DOTTED_RESPONSE_KEY]) ?? asRecord(envelopeRecord?.[UNDERSCORE_RESPONSE_KEY]);
   const errorResponse = asRecord(envelopeRecord?.["error_response"]);
   if (errorResponse) {
     const code = asString(errorResponse["code"]) ?? "UNKNOWN";
@@ -129,259 +128,22 @@ export function parseOpenApiPayload(body: string, hint: { url: URL; itemId: stri
 
   const root = methodResponse ?? envelopeRecord;
   const resultWrapper = asRecord(root?.["result"]);
-  const result = asRecord(resultWrapper?.["productDetailModel"]);
-  if (!result) {
-    throw new ScraperError("NO_PRODUCT_DATA", "AliExpress Open Platform response carries no product payload");
+  const productDetailModel = asRecord(resultWrapper?.["productDetailModel"]);
+  if (productDetailModel) {
+    return mapOpenApiResult(productDetailModel, hint);
   }
-
-  return mapOpenApiResult(result, hint);
+  if (isDsProductGetResult(resultWrapper)) {
+    return mapDsProductGetResult(resultWrapper, hint);
+  }
+  throw new ScraperError("NO_PRODUCT_DATA", "AliExpress Open Platform response carries no product payload");
 }
 
-const LIKELY_PRODUCT_CONTAINERS = [
-  "productDetailModel",
-  "product",
-  "products",
-  "productInfo",
-  "product_info",
-  "item",
-  "items",
-  "sku",
-  "skus",
-  "ae_item_base_info_dto",
-  "ae_item_sku_info_dtos",
-  "ae_multimedia_info_dto",
-  "ae_item_property_info_dtos",
-] as const;
-
-/** Temporary diagnostic fields only. Never includes tokens, secrets, sign, product values, or raw body. */
-export function dsProductGetResponseDiagnostics(status: number, body: string): Record<string, unknown> {
-  const fields: Record<string, unknown> = {
-    httpStatus: status,
-    topLevelKeys: [],
-    hasDottedResponse: false,
-    hasUnderscoreResponse: false,
-    hasErrorResponse: false,
-  };
-  try {
-    const parsed: unknown = JSON.parse(body);
-    const record = asRecord(parsed);
-    if (!record) return fields;
-    fields.topLevelKeys = Object.keys(record);
-    fields.hasDottedResponse = Object.prototype.hasOwnProperty.call(record, DOTTED_RESPONSE_KEY);
-    fields.hasUnderscoreResponse = Object.prototype.hasOwnProperty.call(record, UNDERSCORE_RESPONSE_KEY);
-    fields.hasErrorResponse = Object.prototype.hasOwnProperty.call(record, "error_response");
-
-    const dotted = coerceDiagnosticRecord(record[DOTTED_RESPONSE_KEY]);
-    const underscore = coerceDiagnosticRecord(record[UNDERSCORE_RESPONSE_KEY]);
-    const selected = dotted ?? underscore;
-    fields.selectedEnvelope = dotted ? "dotted" : underscore ? "underscore" : "none";
-    if (!selected) return fields;
-
-    fields.envelopeKeys = Object.keys(selected);
-    const result = coerceDiagnosticRecord(selected["result"]);
-    const data = coerceDiagnosticRecord(selected["data"]);
-    fields.resultKeys = result ? Object.keys(result) : undefined;
-    fields.dataKeys = data ? Object.keys(data) : undefined;
-    fields.resultType = selected["result"] === undefined ? undefined : diagnosticType(selected["result"]);
-    fields.dataType = selected["data"] === undefined ? undefined : diagnosticType(selected["data"]);
-
-    const nestedContainerKeys: Record<string, string[]> = {};
-    const nestedContainerTypes: Record<string, string> = {};
-    for (const key of Object.keys(selected)) {
-      nestedContainerTypes[key] = diagnosticType(selected[key]);
-      const keys = objectKeys(selected[key]);
-      if (keys) nestedContainerKeys[key] = keys;
-      else if (Array.isArray(selected[key])) nestedContainerKeys[key] = [`length:${selected[key].length}`];
-    }
-    if (result) {
-      for (const key of Object.keys(result)) {
-        const nestedKey = `result.${key}`;
-        nestedContainerTypes[nestedKey] = diagnosticType(result[key]);
-        const keys = objectKeys(result[key]);
-        if (keys) nestedContainerKeys[nestedKey] = keys;
-        else if (Array.isArray(result[key])) nestedContainerKeys[nestedKey] = [`length:${result[key].length}`];
-      }
-    }
-    if (data) {
-      for (const key of Object.keys(data)) {
-        const nestedKey = `data.${key}`;
-        nestedContainerTypes[nestedKey] = diagnosticType(data[key]);
-        const keys = objectKeys(data[key]);
-        if (keys) nestedContainerKeys[nestedKey] = keys;
-        else if (Array.isArray(data[key])) nestedContainerKeys[nestedKey] = [`length:${data[key].length}`];
-      }
-    }
-    fields.nestedContainerKeys = nestedContainerKeys;
-    fields.nestedContainerTypes = nestedContainerTypes;
-
-    const productDetailModel = selected["productDetailModel"] ?? result?.["productDetailModel"] ?? data?.["productDetailModel"];
-    fields.hasProductDetailModel = productDetailModel !== undefined;
-    fields.productDetailModelType = productDetailModel === undefined ? undefined : diagnosticType(productDetailModel);
-    const productDetailModelKeys = objectKeys(productDetailModel);
-    if (productDetailModelKeys) fields.productDetailModelKeyCount = productDetailModelKeys.length;
-    if (Array.isArray(productDetailModel)) fields.productDetailModelLength = productDetailModel.length;
-
-    const productContainers: Record<string, unknown> = {};
-    const sources: Array<Record<string, unknown> | undefined> = [selected, result, data];
-    for (const name of LIKELY_PRODUCT_CONTAINERS) {
-      for (const source of sources) {
-        if (!source || !Object.prototype.hasOwnProperty.call(source, name)) continue;
-        const value = source[name];
-        const summary: Record<string, unknown> = { type: diagnosticType(value) };
-        if (Array.isArray(value)) summary.length = value.length;
-        const keys = objectKeys(value);
-        if (keys) summary.keyCount = keys.length;
-        productContainers[name] = summary;
-        break;
-      }
-    }
-    fields.productContainers = productContainers;
-  } catch {
-    fields.parseableJson = false;
-  }
-  return fields;
-}
-
-const SKU_DTO_KEY = "ae_item_sku_info_dtos";
-const SKU_FIELD_NAMES = [
-  "sku_price",
-  "offer_sale_price",
-  "offer_bulk_sale_price",
-  "currency_code",
-  "sku_available_stock",
-  "sku_stock",
-  "id",
-  "sku_id",
-  "ae_sku_property_d_t_o",
-] as const;
-
-/** Temporary SKU-container diagnostic. Keys/types/counts only; never SKU values, prices, or IDs. */
-export function dsProductGetSkuInfoDiagnostics(body: string): Record<string, unknown> {
-  const fields: Record<string, unknown> = { present: false };
-  try {
-    const parsed: unknown = JSON.parse(body);
-    const record = asRecord(parsed);
-    if (!record) return fields;
-    const selected =
-      coerceDiagnosticRecord(record[DOTTED_RESPONSE_KEY]) ?? coerceDiagnosticRecord(record[UNDERSCORE_RESPONSE_KEY]);
-    const result = coerceDiagnosticRecord(selected?.["result"]);
-    if (!result || !Object.prototype.hasOwnProperty.call(result, SKU_DTO_KEY)) return fields;
-
-    const skuInfo = result[SKU_DTO_KEY];
-    fields.present = true;
-    fields.type = diagnosticType(skuInfo);
-    const skuRecord = coerceDiagnosticRecord(skuInfo);
-    if (skuRecord) fields.keys = Object.keys(skuRecord);
-    if (Array.isArray(skuInfo)) fields.length = skuInfo.length;
-
-    const nestedContainerKeys: Record<string, string[]> = {};
-    const nestedContainerTypes: Record<string, string> = {};
-    if (skuRecord) {
-      for (const key of Object.keys(skuRecord)) {
-        nestedContainerTypes[key] = diagnosticType(skuRecord[key]);
-        const keys = objectKeys(skuRecord[key]);
-        if (keys) nestedContainerKeys[key] = keys;
-        else if (Array.isArray(skuRecord[key])) nestedContainerKeys[key] = [`length:${skuRecord[key].length}`];
-      }
-    }
-    fields.nestedContainerKeys = nestedContainerKeys;
-    fields.nestedContainerTypes = nestedContainerTypes;
-
-    const firstSku = firstSkuObject(skuInfo);
-    if (!firstSku) return fields;
-    fields.firstSkuKeys = Object.keys(firstSku);
-    const firstSkuTypes: Record<string, string> = {};
-    for (const key of Object.keys(firstSku)) firstSkuTypes[key] = diagnosticType(firstSku[key]);
-    fields.firstSkuTypes = firstSkuTypes;
-
-    const skuFields: Record<string, unknown> = {};
-    for (const name of SKU_FIELD_NAMES) {
-      if (!Object.prototype.hasOwnProperty.call(firstSku, name)) {
-        skuFields[name] = { present: false };
-        continue;
-      }
-      const value = firstSku[name];
-      const summary: Record<string, unknown> = { present: true, type: diagnosticType(value) };
-      if (Array.isArray(value)) summary.length = value.length;
-      const keys = objectKeys(value);
-      if (keys) summary.keyCount = keys.length;
-      skuFields[name] = summary;
-    }
-    fields.skuFields = skuFields;
-
-    if (Object.prototype.hasOwnProperty.call(firstSku, "ae_sku_property_d_t_o")) {
-      fields.aeSkuPropertyDto = skuPropertyDiagnostic(firstSku["ae_sku_property_d_t_o"]);
-    }
-  } catch {
-    fields.parseableJson = false;
-  }
-  return fields;
-}
-
-function firstSkuObject(value: unknown): Record<string, unknown> | undefined {
-  if (Array.isArray(value)) return asRecord(value[0]);
-  const record = coerceDiagnosticRecord(value);
-  if (!record) return undefined;
-  for (const nested of Object.values(record)) {
-    if (Array.isArray(nested)) return asRecord(nested[0]);
-  }
-  if (SKU_FIELD_NAMES.some((name) => Object.prototype.hasOwnProperty.call(record, name))) return record;
-  for (const nested of Object.values(record)) {
-    const nestedRecord = coerceDiagnosticRecord(nested);
-    if (nestedRecord && SKU_FIELD_NAMES.some((name) => Object.prototype.hasOwnProperty.call(nestedRecord, name))) {
-      return nestedRecord;
-    }
-  }
-  return undefined;
-}
-
-function skuPropertyDiagnostic(value: unknown): Record<string, unknown> {
-  const summary: Record<string, unknown> = { type: diagnosticType(value) };
-  if (Array.isArray(value)) {
-    summary.length = value.length;
-    const first = asRecord(value[0]);
-    if (first) {
-      summary.firstKeys = Object.keys(first);
-      const firstTypes: Record<string, string> = {};
-      for (const key of Object.keys(first)) firstTypes[key] = diagnosticType(first[key]);
-      summary.firstTypes = firstTypes;
-    }
-    return summary;
-  }
-  const record = coerceDiagnosticRecord(value);
-  if (!record) return summary;
-  summary.keys = Object.keys(record);
-  const types: Record<string, string> = {};
-  for (const key of Object.keys(record)) {
-    types[key] = diagnosticType(record[key]);
-    if (Array.isArray(record[key])) summary[`${key}Length`] = record[key].length;
-  }
-  summary.types = types;
-  return summary;
-}
-
-function coerceDiagnosticRecord(value: unknown): Record<string, unknown> | undefined {
-  const direct = asRecord(value);
-  if (direct) return direct;
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  if (!trimmed.startsWith("{")) return undefined;
-  try {
-    return asRecord(JSON.parse(trimmed));
-  } catch {
-    return undefined;
-  }
-}
-
-function objectKeys(value: unknown): string[] | undefined {
-  const record = coerceDiagnosticRecord(value);
-  return record ? Object.keys(record) : undefined;
-}
-
-function diagnosticType(value: unknown): string {
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "array";
-  return typeof value;
+function isDsProductGetResult(value: Record<string, unknown> | undefined): value is Record<string, unknown> {
+  if (!value) return false;
+  return (
+    Object.prototype.hasOwnProperty.call(value, "ae_item_base_info_dto") ||
+    Object.prototype.hasOwnProperty.call(value, "ae_item_sku_info_dtos")
+  );
 }
 
 /** Legacy MD5 signature. Not used by official DS HMAC-SHA256 calls. */
@@ -443,6 +205,105 @@ function mapOpenApiResult(result: Record<string, unknown>, hint: { url: URL; ite
   if (saleInfo && Object.keys(saleInfo).length > 0) parsed.raw["saleInfo"] = saleInfo;
 
   return parsed;
+}
+
+function mapDsProductGetResult(result: Record<string, unknown>, hint: { url: URL; itemId: string }): AliExpressParsedProduct {
+  const baseInfo = asRecord(result["ae_item_base_info_dto"]);
+  const productId = asString(baseInfo?.["product_id"]);
+  const itemId = productId && /^\d{6,20}$/.test(productId) ? productId : hint.itemId;
+
+  const title = asString(baseInfo?.["subject"]);
+  if (!title) {
+    throw new ScraperError("NO_PRODUCT_DATA", "AliExpress Open Platform response is missing a product title");
+  }
+
+  const price = dsSkuPrice(result, baseInfo);
+  if (!price) {
+    throw new ScraperError("NO_PRODUCT_DATA", "AliExpress Open Platform response is missing a price");
+  }
+
+  const images = dsImageUrls(asRecord(result["ae_multimedia_info_dto"])?.["image_urls"]);
+  const attributes = dsAttributes(result["ae_item_properties"]);
+  const brand = findBrand(attributes);
+  const seller = asString(asRecord(result["ae_store_info"])?.["store_name"]);
+  const rating = dsRating(baseInfo);
+
+  const parsed: AliExpressParsedProduct = {
+    itemId,
+    title,
+    price,
+    images,
+    attributes: { ...attributes, ...(seller ? { seller } : {}), ...(brand ? { brand } : {}) },
+    raw: { openApi: result, itemId },
+  };
+
+  if (seller) parsed.seller = seller;
+  if (brand) parsed.brand = brand;
+  if (rating) parsed.rating = rating;
+
+  return parsed;
+}
+
+function dsSkuEntries(result: Record<string, unknown>): Record<string, unknown>[] {
+  const skuInfo = result["ae_item_sku_info_dtos"];
+  if (Array.isArray(skuInfo)) {
+    return skuInfo.map(asRecord).filter((entry): entry is Record<string, unknown> => Boolean(entry));
+  }
+  const wrapped = asRecord(skuInfo)?.["ae_item_sku_info_d_t_o"];
+  if (Array.isArray(wrapped)) {
+    return wrapped.map(asRecord).filter((entry): entry is Record<string, unknown> => Boolean(entry));
+  }
+  const single = asRecord(wrapped);
+  return single ? [single] : [];
+}
+
+function dsSkuPrice(
+  result: Record<string, unknown>,
+  baseInfo: Record<string, unknown> | undefined,
+): AliExpressPrice | undefined {
+  const baseCurrency = asString(baseInfo?.["currency_code"]);
+  for (const sku of dsSkuEntries(result)) {
+    const amount = toNumber(sku["offer_sale_price"]) ?? toNumber(sku["sku_price"]);
+    const currency = asString(sku["currency_code"]) ?? baseCurrency;
+    if (amount === undefined || !currency) continue;
+    const price: AliExpressPrice = { amount, currency };
+    const originalAmount = toNumber(sku["sku_price"]);
+    if (originalAmount !== undefined && originalAmount > amount) price.originalAmount = originalAmount;
+    return price;
+  }
+  return undefined;
+}
+
+function dsImageUrls(value: unknown): Array<{ url: string; alt?: string }> {
+  if (typeof value === "string" && value.includes(";")) {
+    return openApiImages(value.split(";"));
+  }
+  return openApiImages(value);
+}
+
+function dsAttributes(value: unknown): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  const container = asRecord(value);
+  const raw = container?.["ae_item_property"] ?? value;
+  const entries = Array.isArray(raw) ? raw : asRecord(raw) ? [raw] : [];
+  for (const entry of entries) {
+    const record = asRecord(entry);
+    if (!record) continue;
+    const name = asString(record["attr_name"]) ?? asString(record["name"]);
+    const propValue = asString(record["attr_value"]) ?? asString(record["value"]);
+    if (name && propValue) attributes[name] = propValue;
+  }
+  return attributes;
+}
+
+function dsRating(baseInfo: Record<string, unknown> | undefined): { average?: number; count?: number } | undefined {
+  if (!baseInfo) return undefined;
+  const average = toNumber(baseInfo["avg_evaluation_rating"]);
+  const count = toNumber(baseInfo["evaluation_count"]);
+  const rating: { average?: number; count?: number } = {};
+  if (average !== undefined && average > 0) rating.average = average;
+  if (count !== undefined && count > 0) rating.count = count;
+  return Object.keys(rating).length > 0 ? rating : undefined;
 }
 
 function openApiPrice(result: Record<string, unknown>): AliExpressPrice | undefined {
