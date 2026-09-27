@@ -23,6 +23,8 @@ import { DS_BUSINESS_ENDPOINT, DS_SIGN_METHOD, dsHmacSign, dsTimestamp } from ".
  */
 
 const OPEN_API_METHOD = "aliexpress.ds.product.get";
+const DOTTED_RESPONSE_KEY = `${OPEN_API_METHOD}_response`;
+const UNDERSCORE_RESPONSE_KEY = "aliexpress_ds_product_get_response";
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -96,8 +98,9 @@ export async function fetchAliExpressProductOpenApi(
 
 /**
  * Maps an Open Platform `aliexpress.ds.product.get` response into the parser's
- * normalize-ready shape. Exported for tests; the payload shape follows the
- * documented `productDetailModel` contract.
+ * normalize-ready shape. Supports the production underscore envelope
+ * (`aliexpress_ds_product_get_response.result`) and the dotted
+ * `productDetailModel` contract.
  */
 export function parseOpenApiPayload(body: string, hint: { url: URL; itemId: string }): AliExpressParsedProduct {
   let envelope: unknown;
@@ -108,7 +111,8 @@ export function parseOpenApiPayload(body: string, hint: { url: URL; itemId: stri
   }
 
   const envelopeRecord = asRecord(envelope);
-  const methodResponse = asRecord(envelopeRecord?.[`${OPEN_API_METHOD}_response`]);
+  const methodResponse =
+    asRecord(envelopeRecord?.[DOTTED_RESPONSE_KEY]) ?? asRecord(envelopeRecord?.[UNDERSCORE_RESPONSE_KEY]);
   const errorResponse = asRecord(envelopeRecord?.["error_response"]);
   if (errorResponse) {
     const code = asString(errorResponse["code"]) ?? "UNKNOWN";
@@ -124,12 +128,22 @@ export function parseOpenApiPayload(body: string, hint: { url: URL; itemId: stri
 
   const root = methodResponse ?? envelopeRecord;
   const resultWrapper = asRecord(root?.["result"]);
-  const result = asRecord(resultWrapper?.["productDetailModel"]);
-  if (!result) {
-    throw new ScraperError("NO_PRODUCT_DATA", "AliExpress Open Platform response carries no product payload");
+  const productDetailModel = asRecord(resultWrapper?.["productDetailModel"]);
+  if (productDetailModel) {
+    return mapOpenApiResult(productDetailModel, hint);
   }
+  if (isDsProductGetResult(resultWrapper)) {
+    return mapDsProductGetResult(resultWrapper, hint);
+  }
+  throw new ScraperError("NO_PRODUCT_DATA", "AliExpress Open Platform response carries no product payload");
+}
 
-  return mapOpenApiResult(result, hint);
+function isDsProductGetResult(value: Record<string, unknown> | undefined): value is Record<string, unknown> {
+  if (!value) return false;
+  return (
+    Object.prototype.hasOwnProperty.call(value, "ae_item_base_info_dto") ||
+    Object.prototype.hasOwnProperty.call(value, "ae_item_sku_info_dtos")
+  );
 }
 
 /** Legacy MD5 signature. Not used by official DS HMAC-SHA256 calls. */
@@ -191,6 +205,105 @@ function mapOpenApiResult(result: Record<string, unknown>, hint: { url: URL; ite
   if (saleInfo && Object.keys(saleInfo).length > 0) parsed.raw["saleInfo"] = saleInfo;
 
   return parsed;
+}
+
+function mapDsProductGetResult(result: Record<string, unknown>, hint: { url: URL; itemId: string }): AliExpressParsedProduct {
+  const baseInfo = asRecord(result["ae_item_base_info_dto"]);
+  const productId = asString(baseInfo?.["product_id"]);
+  const itemId = productId && /^\d{6,20}$/.test(productId) ? productId : hint.itemId;
+
+  const title = asString(baseInfo?.["subject"]);
+  if (!title) {
+    throw new ScraperError("NO_PRODUCT_DATA", "AliExpress Open Platform response is missing a product title");
+  }
+
+  const price = dsSkuPrice(result, baseInfo);
+  if (!price) {
+    throw new ScraperError("NO_PRODUCT_DATA", "AliExpress Open Platform response is missing a price");
+  }
+
+  const images = dsImageUrls(asRecord(result["ae_multimedia_info_dto"])?.["image_urls"]);
+  const attributes = dsAttributes(result["ae_item_properties"]);
+  const brand = findBrand(attributes);
+  const seller = asString(asRecord(result["ae_store_info"])?.["store_name"]);
+  const rating = dsRating(baseInfo);
+
+  const parsed: AliExpressParsedProduct = {
+    itemId,
+    title,
+    price,
+    images,
+    attributes: { ...attributes, ...(seller ? { seller } : {}), ...(brand ? { brand } : {}) },
+    raw: { openApi: result, itemId },
+  };
+
+  if (seller) parsed.seller = seller;
+  if (brand) parsed.brand = brand;
+  if (rating) parsed.rating = rating;
+
+  return parsed;
+}
+
+function dsSkuEntries(result: Record<string, unknown>): Record<string, unknown>[] {
+  const skuInfo = result["ae_item_sku_info_dtos"];
+  if (Array.isArray(skuInfo)) {
+    return skuInfo.map(asRecord).filter((entry): entry is Record<string, unknown> => Boolean(entry));
+  }
+  const wrapped = asRecord(skuInfo)?.["ae_item_sku_info_d_t_o"];
+  if (Array.isArray(wrapped)) {
+    return wrapped.map(asRecord).filter((entry): entry is Record<string, unknown> => Boolean(entry));
+  }
+  const single = asRecord(wrapped);
+  return single ? [single] : [];
+}
+
+function dsSkuPrice(
+  result: Record<string, unknown>,
+  baseInfo: Record<string, unknown> | undefined,
+): AliExpressPrice | undefined {
+  const baseCurrency = asString(baseInfo?.["currency_code"]);
+  for (const sku of dsSkuEntries(result)) {
+    const amount = toNumber(sku["offer_sale_price"]) ?? toNumber(sku["sku_price"]);
+    const currency = asString(sku["currency_code"]) ?? baseCurrency;
+    if (amount === undefined || !currency) continue;
+    const price: AliExpressPrice = { amount, currency };
+    const originalAmount = toNumber(sku["sku_price"]);
+    if (originalAmount !== undefined && originalAmount > amount) price.originalAmount = originalAmount;
+    return price;
+  }
+  return undefined;
+}
+
+function dsImageUrls(value: unknown): Array<{ url: string; alt?: string }> {
+  if (typeof value === "string" && value.includes(";")) {
+    return openApiImages(value.split(";"));
+  }
+  return openApiImages(value);
+}
+
+function dsAttributes(value: unknown): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  const container = asRecord(value);
+  const raw = container?.["ae_item_property"] ?? value;
+  const entries = Array.isArray(raw) ? raw : asRecord(raw) ? [raw] : [];
+  for (const entry of entries) {
+    const record = asRecord(entry);
+    if (!record) continue;
+    const name = asString(record["attr_name"]) ?? asString(record["name"]);
+    const propValue = asString(record["attr_value"]) ?? asString(record["value"]);
+    if (name && propValue) attributes[name] = propValue;
+  }
+  return attributes;
+}
+
+function dsRating(baseInfo: Record<string, unknown> | undefined): { average?: number; count?: number } | undefined {
+  if (!baseInfo) return undefined;
+  const average = toNumber(baseInfo["avg_evaluation_rating"]);
+  const count = toNumber(baseInfo["evaluation_count"]);
+  const rating: { average?: number; count?: number } = {};
+  if (average !== undefined && average > 0) rating.average = average;
+  if (count !== undefined && count > 0) rating.count = count;
+  return Object.keys(rating).length > 0 ? rating : undefined;
 }
 
 function openApiPrice(result: Record<string, unknown>): AliExpressPrice | undefined {

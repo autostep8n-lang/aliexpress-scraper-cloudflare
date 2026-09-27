@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { logInfo } from "../logging";
 import { normalizeProduct } from "../products/normalize";
 import type { Product } from "../products/types";
 import {
@@ -90,7 +91,12 @@ async function persistSearchProduct(
   let parsed;
   try {
     parsed = await fetchAliExpressProductOpenApi(env, item.itemId, productUrl, { shipToCountry });
-  } catch {
+  } catch (err) {
+    if (err instanceof ScraperError) {
+      logInfo("aliexpress.discovery.enrichment_failed", { code: err.code, message: err.message });
+    } else {
+      logInfo("aliexpress.discovery.enrichment_failed", { code: "UNKNOWN" });
+    }
     return {
       raw: { ...item.raw, externalId: item.itemId, source: "aliexpress" },
       persisted: { status: "invalid", message: "discovered product could not be enriched" },
