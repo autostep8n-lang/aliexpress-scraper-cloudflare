@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { logInfo } from "../logging";
 import { normalizeQuery, parseTimelinePayload, toObservationRow } from "./engine";
 import { upsertGoogleTrends } from "../supabase/repository";
 import {
@@ -305,6 +306,12 @@ interface JsonResponse {
 async function readResponseJson(response: Response, url: URL): Promise<JsonResponse> {
   if (response.status === 429) {
     await response.body?.cancel();
+    logInfo("google_trends_rate_limited", {
+      url: url.origin + url.pathname,
+      pathname: url.pathname,
+      status: 429,
+      endpoint: trendsEndpointName(url.pathname),
+    });
     throw new MarketError("RATE_LIMITED", `google trends rate limited (HTTP 429) for ${url.href}`);
   }
   if (!response.ok) {
@@ -381,6 +388,12 @@ function isRedirectStatus(status: number): boolean {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function trendsEndpointName(pathname: string): "explore" | "widgetdata/multiline" | "unknown" {
+  if (pathname.endsWith("/trends/api/explore")) return "explore";
+  if (pathname.endsWith("/trends/api/widgetdata/multiline")) return "widgetdata/multiline";
+  return "unknown";
 }
 
 function cacheKeyFor(query: NormalizedTrendQuery): string {
