@@ -1,5 +1,6 @@
 import { scoreAndPersistMvpCountryOpportunity } from "../country/pipeline";
 import type { Env } from "../env";
+import { logInfo } from "../logging";
 import { ProductNormalizationError, normalizeProduct } from "../products/normalize";
 import { findScraper } from "../scrapers/registry";
 import { ScraperError } from "../scrapers/types";
@@ -83,9 +84,16 @@ export async function handleScrape(
     case "created":
     case "updated":
       try {
-        await scoreAndPersistMvpCountryOpportunity(env, ctx, {
+        const countryResult = await scoreAndPersistMvpCountryOpportunity(env, ctx, {
           productId: persisted.data.product.id,
           title: persisted.data.product.title,
+        });
+        logInfo("country_opportunity_pipeline", {
+          productId: persisted.data.product.id,
+          country: countryResult.country,
+          keyword: countryResult.keyword,
+          status: countryResult.status,
+          ...(countryResult.code ? { code: countryResult.code } : {}),
         });
       } catch {}
       return jsonOk(

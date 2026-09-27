@@ -1,6 +1,7 @@
 import { scoreAndPersistMvpCountryOpportunity } from "../country/pipeline";
 import { loadDiscoveryPage, loadProductDetail, parseProductId, parseProductListQuery } from "../dashboard/assemble";
 import type { Env } from "../env";
+import { logInfo } from "../logging";
 import type { Product } from "../products/types";
 import { isProduct, validateProduct } from "../products/validation";
 import { upsertProduct } from "../supabase/repository";
@@ -118,9 +119,16 @@ export async function handleProductIngest(
     case "created":
     case "updated":
       try {
-        await scoreAndPersistMvpCountryOpportunity(env, ctx, {
+        const countryResult = await scoreAndPersistMvpCountryOpportunity(env, ctx, {
           productId: result.data.product.id,
           title: result.data.product.title,
+        });
+        logInfo("country_opportunity_pipeline", {
+          productId: result.data.product.id,
+          country: countryResult.country,
+          keyword: countryResult.keyword,
+          status: countryResult.status,
+          ...(countryResult.code ? { code: countryResult.code } : {}),
         });
       } catch {}
       return jsonOk(
