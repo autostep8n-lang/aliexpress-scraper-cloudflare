@@ -211,6 +211,58 @@ describe("internalApiTrendsProvider.fetchSignals", () => {
     });
   });
 
+  it("skips explore after HTTP 429 when SCRAPE_CACHE cooldown is present", async () => {
+    server = createMockPostgrest();
+    let exploreCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      trendsRouter(server, {
+        exploreHandler: () => {
+          exploreCalls += 1;
+          return new Response("rate limited", { status: 429 });
+        },
+      }),
+    );
+    const kv = new MemoryKV();
+    const env = configuredEnv({ SCRAPE_CACHE: kv as unknown as KVNamespace });
+
+    await expect(internalApiTrendsProvider.fetchSignals(NORMALIZED, env, ctx)).rejects.toMatchObject({
+      code: "RATE_LIMITED",
+    });
+    await expect(internalApiTrendsProvider.fetchSignals(NORMALIZED, env, ctx)).rejects.toMatchObject({
+      code: "RATE_LIMITED",
+    });
+    expect(exploreCalls).toBe(1);
+  });
+
+  it("coalesces concurrent fetches for the same query into one explore", async () => {
+    server = createMockPostgrest();
+    let exploreCalls = 0;
+    let releaseExplore: (() => void) | undefined;
+    const exploreStarted = new Promise<void>((resolve) => {
+      releaseExplore = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      trendsRouter(server, {
+        exploreHandler: async () => {
+          exploreCalls += 1;
+          await exploreStarted;
+          return jsonResponse(EXPLORE_FIXTURE);
+        },
+      }),
+    );
+
+    const first = internalApiTrendsProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx);
+    const second = internalApiTrendsProvider.fetchSignals(NORMALIZED, configuredEnv(), ctx);
+    releaseExplore?.();
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(exploreCalls).toBe(1);
+    expect(a).toHaveLength(5);
+    expect(b).toHaveLength(5);
+  });
+
   it("maps non-2xx responses to HTTP_ERROR", async () => {
     server = createMockPostgrest();
     vi.stubGlobal("fetch", trendsRouter(server, { explore: new Response("nope", { status: 500 }) }));
