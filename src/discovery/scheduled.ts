@@ -178,14 +178,75 @@ export async function runScheduledAutomation(
   ctx: ExecutionContext,
   scheduled: ScheduledDiscoveryContext,
 ): Promise<ScheduledAutomationResult> {
+  logInfo("scheduled.automation.entry", { cron: scheduled.cron, scheduledTime: scheduled.scheduledTime });
   const discovery = await runDailyDiscovery(env, ctx, scheduled);
+  logInfo("scheduled.automation.discovery", discoveryLogFields(discovery));
   if (discovery.status !== "ok") {
-    return { discovery, scoring: null, alerts: null };
+    const result = { discovery, scoring: null, alerts: null };
+    logInfo("scheduled.automation.exit", {
+      discoveryStatus: discovery.status,
+      scoringStatus: null,
+      alertsStatus: null,
+    });
+    return result;
   }
+  logInfo("scheduled.automation.scoring_start", { discoveryStatus: discovery.status });
   const scoring = await runAutomatedScoring(env);
+  logInfo("scheduled.automation.scoring_done", scoringLogFields(scoring));
   if (scoring.status !== "ok") {
-    return { discovery, scoring, alerts: null };
+    const result = { discovery, scoring, alerts: null };
+    logInfo("scheduled.automation.exit", {
+      discoveryStatus: discovery.status,
+      scoringStatus: scoring.status,
+      alertsStatus: null,
+    });
+    return result;
   }
   const alerts = await runAutomatedAlerts(env);
-  return { discovery, scoring, alerts };
+  const result = { discovery, scoring, alerts };
+  logInfo("scheduled.automation.exit", {
+    discoveryStatus: discovery.status,
+    scoringStatus: scoring.status,
+    alertsStatus: alerts.status,
+  });
+  return result;
+}
+
+function discoveryLogFields(discovery: DailyDiscoveryRunResult): Record<string, unknown> {
+  if (discovery.status === "ok") {
+    return {
+      status: discovery.status,
+      platform: discovery.platform,
+      query: discovery.query,
+      discovered: discovery.discovered,
+      persisted: discovery.persisted,
+      created: discovery.created,
+      updated: discovery.updated,
+      failed: discovery.failed,
+      durationMs: discovery.durationMs,
+    };
+  }
+  return {
+    status: discovery.status,
+    code: discovery.code,
+    message: discovery.message,
+    query: discovery.query,
+    durationMs: discovery.durationMs,
+  };
+}
+
+function scoringLogFields(scoring: AutomatedScoringSummary): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    status: scoring.status,
+    processed: scoring.total,
+    scored: scoring.scored,
+    skipped: scoring.skipped,
+    failed: scoring.failed,
+    persisted: scoring.persisted,
+    durationMs: scoring.durationMs,
+  };
+  if (scoring.code) fields.code = scoring.code;
+  if (scoring.message) fields.message = scoring.message;
+  if (scoring.reasons) fields.reasons = scoring.reasons;
+  return fields;
 }
