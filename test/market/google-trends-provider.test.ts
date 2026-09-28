@@ -9,6 +9,7 @@ import {
   googleTrendsModule,
   internalApiTrendsProvider,
   isTrendsHost,
+  readCachedGoogleTrendsSignals,
 } from "../../src/market/google-trends";
 import { MarketError } from "../../src/market/types";
 import { createMockPostgrest, type MockPostgrest } from "../helpers/postgrest-mock";
@@ -407,6 +408,33 @@ describe("internalApiTrendsProvider.fetchSignals", () => {
 
     expect(first).toHaveLength(5);
     expect(second).toHaveLength(5);
+    expect(trendsCalls).toBe(1);
+  });
+
+  it("readCachedGoogleTrendsSignals uses the collect cache key and never fetches", async () => {
+    server = createMockPostgrest();
+    let trendsCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      trendsRouter(server, {
+        exploreHandler: () => {
+          trendsCalls += 1;
+          return jsonResponse(EXPLORE_FIXTURE);
+        },
+      }),
+    );
+    const kv = new MemoryKV();
+    const env = configuredEnv({ SCRAPE_CACHE: kv as unknown as KVNamespace });
+
+    const miss = await readCachedGoogleTrendsSignals({ keyword: "smart watch", geo: "US" }, env);
+    expect(miss).toBeUndefined();
+    expect(trendsCalls).toBe(0);
+
+    await internalApiTrendsProvider.fetchSignals(NORMALIZED, env, ctx);
+    expect(trendsCalls).toBe(1);
+
+    const hit = await readCachedGoogleTrendsSignals({ keyword: "smart watch", geo: "US" }, env);
+    expect(hit).toHaveLength(5);
     expect(trendsCalls).toBe(1);
   });
 });

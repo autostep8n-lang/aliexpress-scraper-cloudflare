@@ -99,6 +99,19 @@ class InternalApiTrendsProvider implements GoogleTrendsProvider {
 /** Default singleton provider instance. */
 export const internalApiTrendsProvider: GoogleTrendsProvider = new InternalApiTrendsProvider();
 
+/**
+ * Reads Google Trends signals from `SCRAPE_CACHE` only. Uses the same
+ * `normalizeQuery` + cache key as `collect` / `fetchSignals`. Never contacts
+ * Google, never writes `google_trends`, and does not join inflight fetches.
+ */
+export async function readCachedGoogleTrendsSignals(
+  query: GoogleTrendsQuery,
+  env: Env,
+): Promise<GoogleTrendsSignal[] | undefined> {
+  const normalized = normalizeQuery(query);
+  return readCache(env, cacheKeyFor(normalized));
+}
+
 async function fetchSignalsUncached(
   query: NormalizedTrendQuery,
   env: Env,

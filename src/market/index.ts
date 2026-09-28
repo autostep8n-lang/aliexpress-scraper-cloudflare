@@ -21,6 +21,7 @@ export {
   googleTrendsModule,
   internalApiTrendsProvider,
   isTrendsHost,
+  readCachedGoogleTrendsSignals,
 } from "./google-trends";
 
 export {

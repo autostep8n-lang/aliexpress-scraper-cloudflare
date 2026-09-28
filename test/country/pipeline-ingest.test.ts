@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../../src/env";
 import { googleTrendsModule } from "../../src/market/google-trends";
-import { MarketError, type GoogleTrendsSignal, type MarketCollectResult } from "../../src/market/types";
+import type { GoogleTrendsSignal } from "../../src/market/types";
 import { normalizeProduct } from "../../src/products/normalize";
 import type { Product } from "../../src/products/types";
 import { routeRequest } from "../../src/router";
@@ -18,8 +18,33 @@ const SOURCE_ALIEXPRESS = {
   kind: "platform",
 };
 
-function configuredEnv(): Env {
-  return { SUPABASE_URL, SUPABASE_SECRET_KEY: SECRET_KEY } as Env;
+class MemoryKV {
+  private readonly store = new Map<string, { value: string; ttl?: number }>();
+
+  async get(key: string): Promise<string | null> {
+    const entry = this.store.get(key);
+    return entry ? entry.value : null;
+  }
+
+  async put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void> {
+    this.store.set(key, { value, ttl: opts?.expirationTtl });
+  }
+
+  async delete(key: string): Promise<void> {
+    this.store.delete(key);
+  }
+}
+
+function trendsCacheKey(keyword: string, geo = "SA"): string {
+  return `market:google-trends:${geo}:web:today 5-y::${keyword.toLowerCase()}`;
+}
+
+function configuredEnv(kv: MemoryKV): Env {
+  return {
+    SUPABASE_URL,
+    SUPABASE_SECRET_KEY: SECRET_KEY,
+    SCRAPE_CACHE: kv as unknown as KVNamespace,
+  } as Env;
 }
 
 function mockCtx(): ExecutionContext {
@@ -65,34 +90,19 @@ function saSignal(keyword = TITLE): GoogleTrendsSignal {
   };
 }
 
-function collectResult(signals: GoogleTrendsSignal[], keyword = TITLE): MarketCollectResult {
-  return {
-    source: "google-trends",
-    provider: "internal-api",
-    keyword,
-    geo: "SA",
-    timeRange: "today 5-y",
-    property: "web",
-    category: null,
-    capturedAt: "2026-03-01T00:00:00.000Z",
-    requested: signals.length,
-    persisted: signals.length,
-    created: signals.length,
-    updated: 0,
-    failed: 0,
-    signals,
-  };
-}
-
 describe("POST /api/products country opportunity glue", () => {
   let server: MockPostgrest;
   let ctx: ExecutionContext;
+  let kv: MemoryKV;
+  let collect: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     server = createMockPostgrest();
     server.seed("sources", [SOURCE_ALIEXPRESS]);
     ctx = mockCtx();
+    kv = new MemoryKV();
     vi.stubGlobal("fetch", server.fetch);
+    collect = vi.spyOn(googleTrendsModule, "collect").mockRejectedValue(new Error("collect must not be called"));
   });
 
   afterEach(() => {
@@ -107,23 +117,23 @@ describe("POST /api/products country opportunity glue", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       }),
-      configuredEnv(),
+      configuredEnv(kv),
       ctx,
     );
   }
 
   async function get(path: string): Promise<Response> {
-    return routeRequest(new Request(`https://worker.example${path}`, { method: "GET" }), configuredEnv(), ctx);
+    return routeRequest(new Request(`https://worker.example${path}`, { method: "GET" }), configuredEnv(kv), ctx);
   }
 
-  it("persists a SA country score after successful ingest and ranks it on /api/opportunities", async () => {
-    const collect = vi.spyOn(googleTrendsModule, "collect").mockResolvedValue(collectResult([saSignal()]));
+  it("persists a SA country score from cache after ingest without calling collect", async () => {
+    await kv.put(trendsCacheKey(TITLE), JSON.stringify([saSignal()]));
 
     const ingest = await post({ product: aliexpressProduct() });
     expect(ingest.status).toBe(201);
     const ingested = (await ingest.json()) as { product: { id: string; title: string } };
 
-    expect(collect.mock.calls[0][0]).toEqual({ keyword: TITLE, geo: "SA" });
+    expect(collect).not.toHaveBeenCalled();
     expect(server.store.country_opportunity_scores).toHaveLength(1);
     expect(server.store.country_opportunity_scores[0].country).toBe("SA");
     expect(server.store.country_opportunity_scores[0].product_id).toBe(ingested.product.id);
@@ -134,6 +144,7 @@ describe("POST /api/products country opportunity glue", () => {
           (request.method === "POST" || request.method === "PATCH") && request.url.includes("/rest/v1/scores"),
       ),
     ).toBe(false);
+    expect(server.requests.some((request) => request.url.includes("trends.google.com"))).toBe(false);
 
     const ranked = (await (await get("/api/opportunities")).json()) as {
       products: Array<{
@@ -153,37 +164,40 @@ describe("POST /api/products country opportunity glue", () => {
     expect(listed.products.map((row) => row.id)).toEqual([ingested.product.id]);
   });
 
-  it("keeps ingest 201 when Trends throws and does not write country or scores rows", async () => {
-    vi.spyOn(googleTrendsModule, "collect").mockRejectedValue(new MarketError("TIMEOUT", "google trends timed out"));
-
+  it("keeps ingest 201 on cache miss without live Trends or country rows", async () => {
     const ingest = await post({ product: aliexpressProduct() });
     expect(ingest.status).toBe(201);
 
+    expect(collect).not.toHaveBeenCalled();
     expect(server.store.products).toHaveLength(1);
     expect(server.store.country_opportunity_scores).toHaveLength(0);
     expect(server.store.scores).toHaveLength(0);
+    expect(server.requests.some((request) => request.url.includes("trends.google.com"))).toBe(false);
 
     const ranked = (await (await get("/api/opportunities")).json()) as { products: unknown[]; page: { total: number } };
     expect(ranked.products).toEqual([]);
     expect(ranked.page.total).toBe(0);
   });
 
-  it("keeps ingest 201 when Trends is empty and does not persist a country row", async () => {
-    vi.spyOn(googleTrendsModule, "collect").mockResolvedValue(collectResult([]));
+  it("keeps ingest 201 when cached Trends are empty and does not persist a country row", async () => {
+    await kv.put(trendsCacheKey(TITLE), JSON.stringify([]));
 
     const ingest = await post({ product: aliexpressProduct() });
     expect(ingest.status).toBe(201);
+    expect(collect).not.toHaveBeenCalled();
     expect(server.store.country_opportunity_scores).toHaveLength(0);
   });
 
   it("does not duplicate the SA row on re-ingest", async () => {
-    vi.spyOn(googleTrendsModule, "collect").mockResolvedValue(collectResult([saSignal()]));
+    await kv.put(trendsCacheKey(TITLE), JSON.stringify([saSignal()]));
+    await kv.put(trendsCacheKey("Wireless Earbuds Pro"), JSON.stringify([saSignal("Wireless Earbuds Pro")]));
 
     const first = await post({ product: aliexpressProduct() });
     expect(first.status).toBe(201);
     const second = await post({ product: { ...aliexpressProduct(), title: "Wireless Earbuds Pro" } });
     expect(second.status).toBe(200);
 
+    expect(collect).not.toHaveBeenCalled();
     expect(server.store.products).toHaveLength(1);
     expect(server.store.country_opportunity_scores).toHaveLength(1);
     expect(server.store.country_opportunity_scores[0].country).toBe("SA");
