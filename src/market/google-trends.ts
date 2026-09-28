@@ -31,6 +31,8 @@ import {
  * - ~512KB response-size cap
  * - `429` maps to `RATE_LIMITED`; no tight retry loops
  * - optional short-TTL `SCRAPE_CACHE` cache keyed on the normalized query
+ * - on HTTP 429, a short-TTL `SCRAPE_CACHE` cooldown skips further explore
+ *   calls until it expires; the caller still receives `RATE_LIMITED`
  *
  * The acquisition mechanism is isolated behind `GoogleTrendsProvider`, so the
  * domain model and persistence never depend on how data is fetched.
@@ -44,7 +46,11 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 512 * 1024;
 const CACHE_PREFIX = "market:google-trends:";
 const CACHE_TTL_SECONDS = 60 * 60;
+const RATE_LIMIT_CACHE_KEY = `${CACHE_PREFIX}rate-limited`;
+const RATE_LIMIT_TTL_SECONDS = 60;
 const DEFAULT_PROVIDER_NAME = "internal-api";
+
+const inflightByCacheKey = new Map<string, Promise<GoogleTrendsSignal[]>>();
 
 /** True for trends.google.com and any of its subdomains. */
 export function isTrendsHost(hostname: string): boolean {
@@ -70,22 +76,59 @@ class InternalApiTrendsProvider implements GoogleTrendsProvider {
   readonly name = DEFAULT_PROVIDER_NAME;
 
   async fetchSignals(query: NormalizedTrendQuery, env: Env, ctx: ExecutionContext): Promise<GoogleTrendsSignal[]> {
-    const capturedAt = new Date().toISOString();
     const cacheKey = cacheKeyFor(query);
 
-    const cached = await readCache(env, cacheKey);
-    if (cached) return cached;
+    const existing = inflightByCacheKey.get(cacheKey);
+    if (existing) return existing;
 
-    const payload = await fetchMultiline(query);
-    const signals = parseTimelinePayload(payload, query, capturedAt);
+    const pending = (async () => {
+      const cached = await readCache(env, cacheKey);
+      if (cached) return cached;
+      return fetchSignalsUncached(query, env, ctx, cacheKey);
+    })();
 
-    await writeCache(env, ctx, cacheKey, signals);
-    return signals;
+    inflightByCacheKey.set(cacheKey, pending);
+    try {
+      return await pending;
+    } finally {
+      inflightByCacheKey.delete(cacheKey);
+    }
   }
 }
 
 /** Default singleton provider instance. */
 export const internalApiTrendsProvider: GoogleTrendsProvider = new InternalApiTrendsProvider();
+
+/**
+ * Reads Google Trends signals from `SCRAPE_CACHE` only. Uses the same
+ * `normalizeQuery` + cache key as `collect` / `fetchSignals`. Never contacts
+ * Google, never writes `google_trends`, and does not join inflight fetches.
+ */
+export async function readCachedGoogleTrendsSignals(
+  query: GoogleTrendsQuery,
+  env: Env,
+): Promise<GoogleTrendsSignal[] | undefined> {
+  const normalized = normalizeQuery(query);
+  return readCache(env, cacheKeyFor(normalized));
+}
+
+async function fetchSignalsUncached(
+  query: NormalizedTrendQuery,
+  env: Env,
+  ctx: ExecutionContext,
+  cacheKey: string,
+): Promise<GoogleTrendsSignal[]> {
+  if (await isRateLimited(env)) {
+    throw rateLimitedError("https://trends.google.com/trends/api/explore");
+  }
+
+  const capturedAt = new Date().toISOString();
+  const payload = await fetchMultiline(query, env);
+  const signals = parseTimelinePayload(payload, query, capturedAt);
+
+  await writeCache(env, ctx, cacheKey, signals);
+  return signals;
+}
 
 /**
  * Google Trends collect module: normalize -> fetch via the active provider ->
@@ -157,8 +200,8 @@ async function persistSignals(
  * Returns the raw `widgetdata/multiline` payload for the single requested
  * keyword (see `buildExploreRequest`).
  */
-async function fetchMultiline(query: NormalizedTrendQuery): Promise<unknown> {
-  const explore = await fetchExplore(query);
+async function fetchMultiline(query: NormalizedTrendQuery, env: Env): Promise<unknown> {
+  const explore = await fetchExplore(query, env);
 
   const widget = explore.widgets.find((widget) => widget.id === "TIMESERIES") ?? explore.widgets[0];
   if (!widget) {
@@ -178,7 +221,7 @@ async function fetchMultiline(query: NormalizedTrendQuery): Promise<unknown> {
   if (explore.cookie) headers.cookie = explore.cookie;
 
   const response = await fetchWithRedirects(url, { headers, redirect: "manual" });
-  const { json } = await readResponseJson(response, url);
+  const { json } = await readResponseJson(response, url, env);
   return json;
 }
 
@@ -188,7 +231,10 @@ interface ExploreWidget {
   request: string;
 }
 
-async function fetchExplore(query: NormalizedTrendQuery): Promise<{ widgets: ExploreWidget[]; cookie: string | null }> {
+async function fetchExplore(
+  query: NormalizedTrendQuery,
+  env: Env,
+): Promise<{ widgets: ExploreWidget[]; cookie: string | null }> {
   const url = new URL(`https://${TRENDS_API_HOST}/trends/api/explore`);
   url.searchParams.set("hl", "en-US");
   url.searchParams.set("tz", "0");
@@ -201,7 +247,7 @@ async function fetchExplore(query: NormalizedTrendQuery): Promise<{ widgets: Exp
     },
     redirect: "manual",
   });
-  const { json, cookie: headerCookie } = await readResponseJson(response, url);
+  const { json, cookie: headerCookie } = await readResponseJson(response, url, env);
 
   const root = asRecord(json);
   if (!root) {
@@ -303,16 +349,17 @@ interface JsonResponse {
   cookie: string | null;
 }
 
-async function readResponseJson(response: Response, url: URL): Promise<JsonResponse> {
+async function readResponseJson(response: Response, url: URL, env: Env): Promise<JsonResponse> {
   if (response.status === 429) {
     await response.body?.cancel();
+    await writeRateLimited(env);
     logInfo("google_trends_rate_limited", {
       url: url.origin + url.pathname,
       pathname: url.pathname,
       status: 429,
       endpoint: trendsEndpointName(url.pathname),
     });
-    throw new MarketError("RATE_LIMITED", `google trends rate limited (HTTP 429) for ${url.href}`);
+    throw rateLimitedError(url.href);
   }
   if (!response.ok) {
     await response.body?.cancel();
@@ -399,6 +446,29 @@ function trendsEndpointName(pathname: string): "explore" | "widgetdata/multiline
 function cacheKeyFor(query: NormalizedTrendQuery): string {
   const parts = [query.geo, query.property, query.timeRange, String(query.category ?? ""), query.keyword.toLowerCase()];
   return `${CACHE_PREFIX}${parts.join(":")}`;
+}
+
+function rateLimitedError(url: string): MarketError {
+  return new MarketError("RATE_LIMITED", `google trends rate limited (HTTP 429) for ${url}`);
+}
+
+async function isRateLimited(env: Env): Promise<boolean> {
+  if (!env.SCRAPE_CACHE) return false;
+  try {
+    const raw = await env.SCRAPE_CACHE.get(RATE_LIMIT_CACHE_KEY);
+    return raw === "1";
+  } catch {
+    return false;
+  }
+}
+
+async function writeRateLimited(env: Env): Promise<void> {
+  if (!env.SCRAPE_CACHE) return;
+  try {
+    await env.SCRAPE_CACHE.put(RATE_LIMIT_CACHE_KEY, "1", { expirationTtl: RATE_LIMIT_TTL_SECONDS });
+  } catch {
+    // cache is optional; the 429 still surfaces as RATE_LIMITED
+  }
 }
 
 async function readCache(env: Env, key: string): Promise<GoogleTrendsSignal[] | undefined> {

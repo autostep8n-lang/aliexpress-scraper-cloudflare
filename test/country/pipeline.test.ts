@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MVP_COUNTRY, scoreAndPersistMvpCountryOpportunity } from "../../src/country/pipeline";
 import type { Env } from "../../src/env";
-import { googleTrendsModule } from "../../src/market/google-trends";
-import { MarketError, type GoogleTrendsSignal, type MarketCollectResult } from "../../src/market/types";
+import { googleTrendsModule, readCachedGoogleTrendsSignals } from "../../src/market/google-trends";
+import type { GoogleTrendsSignal } from "../../src/market/types";
 import { createMockPostgrest, type MockPostgrest, type RecordedRequest } from "../helpers/postgrest-mock";
 
 const SUPABASE_URL = "https://example.supabase.co";
@@ -10,8 +10,33 @@ const SECRET_KEY = "test-secret-key";
 const PRODUCT_ID = "11111111-1111-1111-1111-111111111111";
 const TITLE = "Wireless Earbuds";
 
-function configuredEnv(): Env {
-  return { SUPABASE_URL, SUPABASE_SECRET_KEY: SECRET_KEY } as Env;
+class MemoryKV {
+  private readonly store = new Map<string, { value: string; ttl?: number }>();
+
+  async get(key: string): Promise<string | null> {
+    const entry = this.store.get(key);
+    return entry ? entry.value : null;
+  }
+
+  async put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void> {
+    this.store.set(key, { value, ttl: opts?.expirationTtl });
+  }
+
+  async delete(key: string): Promise<void> {
+    this.store.delete(key);
+  }
+}
+
+function trendsCacheKey(keyword: string, geo = "SA"): string {
+  return `market:google-trends:${geo}:web:today 5-y::${keyword.toLowerCase()}`;
+}
+
+function configuredEnv(kv?: MemoryKV): Env {
+  return {
+    SUPABASE_URL,
+    SUPABASE_SECRET_KEY: SECRET_KEY,
+    ...(kv ? { SCRAPE_CACHE: kv as unknown as KVNamespace } : {}),
+  } as Env;
 }
 
 function mockCtx(): ExecutionContext {
@@ -38,23 +63,8 @@ function saSignal(overrides: Partial<GoogleTrendsSignal> = {}): GoogleTrendsSign
   };
 }
 
-function collectResult(signals: GoogleTrendsSignal[], keyword = TITLE): MarketCollectResult {
-  return {
-    source: "google-trends",
-    provider: "internal-api",
-    keyword,
-    geo: "SA",
-    timeRange: "today 5-y",
-    property: "web",
-    category: null,
-    capturedAt: "2026-03-01T00:00:00.000Z",
-    requested: signals.length,
-    persisted: signals.length,
-    created: signals.length,
-    updated: 0,
-    failed: 0,
-    signals,
-  };
+async function seedCachedSignals(kv: MemoryKV, signals: GoogleTrendsSignal[], keyword = TITLE): Promise<void> {
+  await kv.put(trendsCacheKey(keyword), JSON.stringify(signals));
 }
 
 function requestsTo(server: MockPostgrest, method: string, path: string): RecordedRequest[] {
@@ -71,11 +81,15 @@ function scoreWrites(server: MockPostgrest): RecordedRequest[] {
 describe("scoreAndPersistMvpCountryOpportunity", () => {
   let server: MockPostgrest;
   let ctx: ExecutionContext;
+  let kv: MemoryKV;
+  let collect: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     server = createMockPostgrest();
     ctx = mockCtx();
+    kv = new MemoryKV();
     vi.stubGlobal("fetch", server.fetch);
+    collect = vi.spyOn(googleTrendsModule, "collect").mockRejectedValue(new Error("collect must not be called"));
   });
 
   afterEach(() => {
@@ -87,17 +101,16 @@ describe("scoreAndPersistMvpCountryOpportunity", () => {
     expect(MVP_COUNTRY).toBe("SA");
   });
 
-  it("writes a SA country_opportunity row when Trends returns finite interest", async () => {
-    const collect = vi.spyOn(googleTrendsModule, "collect").mockResolvedValue(collectResult([saSignal()]));
+  it("writes a SA country_opportunity row from cached finite interest without collecting", async () => {
+    await seedCachedSignals(kv, [saSignal()]);
 
-    const result = await scoreAndPersistMvpCountryOpportunity(configuredEnv(), ctx, {
+    const result = await scoreAndPersistMvpCountryOpportunity(configuredEnv(kv), ctx, {
       productId: PRODUCT_ID,
       title: `  ${TITLE}  `,
     });
 
     expect(result).toEqual({ status: "written", country: "SA", keyword: TITLE });
-    expect(collect).toHaveBeenCalledTimes(1);
-    expect(collect.mock.calls[0][0]).toEqual({ keyword: TITLE, geo: "SA" });
+    expect(collect).not.toHaveBeenCalled();
     expect(server.store.country_opportunity_scores).toHaveLength(1);
 
     const row = server.store.country_opportunity_scores[0];
@@ -111,30 +124,26 @@ describe("scoreAndPersistMvpCountryOpportunity", () => {
     expect((ctx as unknown as { waitUntil: ReturnType<typeof vi.fn> }).waitUntil).not.toHaveBeenCalled();
   });
 
-  it("always collects geo SA and never US/GB/EU/WORLD", async () => {
-    const collect = vi.spyOn(googleTrendsModule, "collect").mockResolvedValue(collectResult([saSignal()]));
+  it("reads cached geo SA signals and never US/GB/EU/WORLD", async () => {
+    await kv.put(trendsCacheKey(TITLE, "US"), JSON.stringify([saSignal({ geo: "US" })]));
+    await seedCachedSignals(kv, [saSignal()]);
 
-    await scoreAndPersistMvpCountryOpportunity(configuredEnv(), ctx, { productId: PRODUCT_ID, title: TITLE });
+    const result = await scoreAndPersistMvpCountryOpportunity(configuredEnv(kv), ctx, {
+      productId: PRODUCT_ID,
+      title: TITLE,
+    });
 
-    for (const call of collect.mock.calls) {
-      const query = call[0] as { geo?: unknown };
-      expect(query.geo).toBe("SA");
-      expect(query.geo).not.toBe("US");
-      expect(query.geo).not.toBe("GB");
-      expect(query.geo).not.toBe("EU");
-      expect(query.geo).not.toBe("WORLD");
-      expect(query.geo).not.toBe("UK");
-    }
+    expect(result).toEqual({ status: "written", country: "SA", keyword: TITLE });
+    expect(server.store.country_opportunity_scores[0].country).toBe("SA");
+    expect(collect).not.toHaveBeenCalled();
   });
 
   it("skips INVALID_KEYWORD for empty or overlong titles without calling Trends", async () => {
-    const collect = vi.spyOn(googleTrendsModule, "collect");
-
-    const blank = await scoreAndPersistMvpCountryOpportunity(configuredEnv(), ctx, {
+    const blank = await scoreAndPersistMvpCountryOpportunity(configuredEnv(kv), ctx, {
       productId: PRODUCT_ID,
       title: "   ",
     });
-    const long = await scoreAndPersistMvpCountryOpportunity(configuredEnv(), ctx, {
+    const long = await scoreAndPersistMvpCountryOpportunity(configuredEnv(kv), ctx, {
       productId: PRODUCT_ID,
       title: "x".repeat(201),
     });
@@ -145,62 +154,60 @@ describe("scoreAndPersistMvpCountryOpportunity", () => {
     expect(server.store.country_opportunity_scores).toHaveLength(0);
   });
 
-  it("returns failed TIMEOUT without persisting when Trends throws", async () => {
-    vi.spyOn(googleTrendsModule, "collect").mockRejectedValue(new MarketError("TIMEOUT", "google trends timed out"));
-
-    const result = await scoreAndPersistMvpCountryOpportunity(configuredEnv(), ctx, {
+  it("skips TRENDS_UNAVAILABLE on cache miss without collecting or persisting", async () => {
+    const result = await scoreAndPersistMvpCountryOpportunity(configuredEnv(kv), ctx, {
       productId: PRODUCT_ID,
       title: TITLE,
     });
 
-    expect(result).toEqual({ status: "failed", code: "TIMEOUT", country: "SA", keyword: TITLE });
+    expect(result).toEqual({ status: "skipped", code: "TRENDS_UNAVAILABLE", country: "SA", keyword: TITLE });
+    expect(collect).not.toHaveBeenCalled();
     expect(server.store.country_opportunity_scores).toHaveLength(0);
     expect(scoreWrites(server)).toHaveLength(0);
   });
 
-  it("skips UNKNOWN_OR_ZERO_WEIGHT when Trends returns no matching evidence", async () => {
-    vi.spyOn(googleTrendsModule, "collect").mockResolvedValue(collectResult([]));
+  it("skips UNKNOWN_OR_ZERO_WEIGHT when the cache holds no matching evidence", async () => {
+    await seedCachedSignals(kv, []);
 
-    const result = await scoreAndPersistMvpCountryOpportunity(configuredEnv(), ctx, {
+    const result = await scoreAndPersistMvpCountryOpportunity(configuredEnv(kv), ctx, {
       productId: PRODUCT_ID,
       title: TITLE,
     });
 
     expect(result).toEqual({ status: "skipped", code: "UNKNOWN_OR_ZERO_WEIGHT", country: "SA", keyword: TITLE });
+    expect(collect).not.toHaveBeenCalled();
     expect(server.store.country_opportunity_scores).toHaveLength(0);
   });
 
-  it("skips WORLD-geo signals that do not match SA", async () => {
-    vi.spyOn(googleTrendsModule, "collect").mockResolvedValue(
-      collectResult([saSignal({ geo: "WORLD" }), saSignal({ geo: "US" })]),
-    );
+  it("skips WORLD-geo cached signals that do not match SA", async () => {
+    await seedCachedSignals(kv, [saSignal({ geo: "WORLD" }), saSignal({ geo: "US" })]);
 
-    const result = await scoreAndPersistMvpCountryOpportunity(configuredEnv(), ctx, {
+    const result = await scoreAndPersistMvpCountryOpportunity(configuredEnv(kv), ctx, {
       productId: PRODUCT_ID,
       title: TITLE,
     });
 
     expect(result.status).toBe("skipped");
     expect(result.code).toBe("UNKNOWN_OR_ZERO_WEIGHT");
+    expect(collect).not.toHaveBeenCalled();
     expect(server.store.country_opportunity_scores).toHaveLength(0);
   });
 
-  it("re-scores the same product x SA without duplicating the row", async () => {
-    vi.spyOn(googleTrendsModule, "collect")
-      .mockResolvedValueOnce(collectResult([saSignal({ value: 80 })]))
-      .mockResolvedValueOnce(collectResult([saSignal({ value: 40 })]));
+  it("re-scores the same product x SA from cache without duplicating the row", async () => {
+    await seedCachedSignals(kv, [saSignal({ value: 80 })]);
 
-    const first = await scoreAndPersistMvpCountryOpportunity(configuredEnv(), ctx, {
+    const first = await scoreAndPersistMvpCountryOpportunity(configuredEnv(kv), ctx, {
       productId: PRODUCT_ID,
       title: TITLE,
     });
-    const second = await scoreAndPersistMvpCountryOpportunity(configuredEnv(), ctx, {
+    const second = await scoreAndPersistMvpCountryOpportunity(configuredEnv(kv), ctx, {
       productId: PRODUCT_ID,
       title: TITLE,
     });
 
     expect(first.status).toBe("written");
     expect(second.status).toBe("written");
+    expect(collect).not.toHaveBeenCalled();
     expect(server.store.country_opportunity_scores).toHaveLength(1);
     expect(server.store.country_opportunity_scores[0].country).toBe("SA");
     expect(server.store.country_opportunity_scores[0].product_id).toBe(PRODUCT_ID);
@@ -212,12 +219,16 @@ describe("scoreAndPersistMvpCountryOpportunity", () => {
   });
 
   it("returns SUPABASE_NOT_CONFIGURED without writing when credentials are missing", async () => {
-    vi.spyOn(googleTrendsModule, "collect").mockResolvedValue(collectResult([saSignal()]));
+    await seedCachedSignals(kv, [saSignal()]);
 
-    const result = await scoreAndPersistMvpCountryOpportunity({} as Env, ctx, {
-      productId: PRODUCT_ID,
-      title: TITLE,
-    });
+    const result = await scoreAndPersistMvpCountryOpportunity(
+      { SCRAPE_CACHE: kv as unknown as KVNamespace } as Env,
+      ctx,
+      {
+        productId: PRODUCT_ID,
+        title: TITLE,
+      },
+    );
 
     expect(result).toEqual({
       status: "failed",
@@ -225,22 +236,39 @@ describe("scoreAndPersistMvpCountryOpportunity", () => {
       country: "SA",
       keyword: TITLE,
     });
+    expect(collect).not.toHaveBeenCalled();
   });
 
   it("returns country_opportunity_upsert_failed when the country table rejects the write", async () => {
-    vi.spyOn(googleTrendsModule, "collect").mockResolvedValue(collectResult([saSignal()]));
+    await seedCachedSignals(kv, [saSignal()]);
     server.override("POST", "/rest/v1/country_opportunity_scores", 400, {
       code: "23514",
       message: "new row violates check constraint",
     });
 
-    const result = await scoreAndPersistMvpCountryOpportunity(configuredEnv(), ctx, {
+    const result = await scoreAndPersistMvpCountryOpportunity(configuredEnv(kv), ctx, {
       productId: PRODUCT_ID,
       title: TITLE,
     });
 
     expect(result.status).toBe("failed");
     expect(result.code).toBe("country_opportunity_upsert_failed");
+    expect(collect).not.toHaveBeenCalled();
     expect(scoreWrites(server)).toHaveLength(0);
+  });
+
+  it("shares the collect cache key so a prior collect write is readable without a second collect", async () => {
+    await seedCachedSignals(kv, [saSignal()]);
+    const env = configuredEnv(kv);
+
+    const cached = await readCachedGoogleTrendsSignals({ keyword: TITLE, geo: "SA" }, env);
+    expect(cached).toEqual([saSignal()]);
+
+    const result = await scoreAndPersistMvpCountryOpportunity(env, ctx, {
+      productId: PRODUCT_ID,
+      title: TITLE,
+    });
+    expect(result.status).toBe("written");
+    expect(collect).not.toHaveBeenCalled();
   });
 });

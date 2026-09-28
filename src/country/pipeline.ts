@@ -1,6 +1,6 @@
 import type { Env } from "../env";
-import { findMarketIntelligence } from "../market/registry";
-import { MarketError, type GoogleTrendsSignal, type MarketCollectResult } from "../market/types";
+import { readCachedGoogleTrendsSignals } from "../market/google-trends";
+import { MarketError, type GoogleTrendsSignal } from "../market/types";
 import { upsertCountryOpportunityScores } from "../supabase/repository";
 import {
   analyzeCountryIntelligence,
@@ -23,7 +23,7 @@ export type CountryOpportunityPipelineResult = {
 
 export async function scoreAndPersistMvpCountryOpportunity(
   env: Env,
-  ctx: ExecutionContext,
+  _ctx: ExecutionContext,
   input: { productId: string; title: string },
 ): Promise<CountryOpportunityPipelineResult> {
   let keyword: string;
@@ -37,14 +37,13 @@ export async function scoreAndPersistMvpCountryOpportunity(
   }
 
   try {
-    const module = findMarketIntelligence("google-trends");
-    if (!module) {
-      return { status: "failed", code: "NO_MARKET_SOURCE", country: MVP_COUNTRY, keyword };
-    }
-
-    let collected: MarketCollectResult;
+    let trends: GoogleTrendsSignal[];
     try {
-      collected = (await module.collect({ keyword, geo: MVP_COUNTRY }, env, ctx)) as MarketCollectResult;
+      const cached = await readCachedGoogleTrendsSignals({ keyword, geo: MVP_COUNTRY }, env);
+      if (!cached) {
+        return { status: "skipped", code: "TRENDS_UNAVAILABLE", country: MVP_COUNTRY, keyword };
+      }
+      trends = cached;
     } catch (err) {
       if (err instanceof MarketError) {
         return { status: "failed", code: err.code, country: MVP_COUNTRY, keyword };
@@ -52,7 +51,6 @@ export async function scoreAndPersistMvpCountryOpportunity(
       return failedFrom(err, keyword);
     }
 
-    const trends = Array.isArray(collected.signals) ? (collected.signals as GoogleTrendsSignal[]) : [];
     const countryIntelligence = analyzeCountryIntelligence({
       query: { keyword, country: MVP_COUNTRY },
       trends,
