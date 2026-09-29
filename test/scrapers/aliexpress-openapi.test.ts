@@ -310,6 +310,29 @@ describe("parseOpenApiPayload", () => {
     expect(parsed.rating).toEqual({ average: 4.6, count: 18 });
   });
 
+  it("maps production camelCase evaluationCount and avgEvaluationRating", () => {
+    const parsed = parseOpenApiPayload(
+      JSON.stringify({
+        aliexpress_ds_product_get_response: {
+          result: {
+            ae_item_base_info_dto: {
+              product_id: ITEM_ID,
+              subject: "Wireless Earbuds Test Title",
+              currency_code: "USD",
+              avgEvaluationRating: "4.3",
+              evaluationCount: "119",
+            },
+            ae_item_sku_info_dtos: {
+              ae_item_sku_info_d_t_o: [{ offer_sale_price: "8.50", sku_price: "9.99", currency_code: "USD" }],
+            },
+          },
+        },
+      }),
+      HINT,
+    );
+    expect(parsed.rating).toEqual({ average: 4.3, count: 119 });
+  });
+
   it("prefers SKU offer_sale_price and falls back to sku_price", () => {
     const preferred = parseOpenApiPayload(dsSuccessBody(), HINT);
     expect(preferred.price.amount).toBe(8.5);

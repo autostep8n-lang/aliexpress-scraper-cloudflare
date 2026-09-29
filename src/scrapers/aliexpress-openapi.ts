@@ -336,8 +336,8 @@ function dsAttributes(value: unknown): Record<string, string> {
 
 function dsRating(baseInfo: Record<string, unknown> | undefined): { average?: number; count?: number } | undefined {
   if (!baseInfo) return undefined;
-  const average = toNumber(baseInfo["avg_evaluation_rating"]);
-  const count = toNumber(baseInfo["evaluation_count"]);
+  const average = toNumber(baseInfo["avgEvaluationRating"]) ?? toNumber(baseInfo["avg_evaluation_rating"]);
+  const count = toNumber(baseInfo["evaluationCount"]) ?? toNumber(baseInfo["evaluation_count"]);
   const rating: { average?: number; count?: number } = {};
   if (average !== undefined && average > 0) rating.average = average;
   if (count !== undefined && count > 0) rating.count = count;
