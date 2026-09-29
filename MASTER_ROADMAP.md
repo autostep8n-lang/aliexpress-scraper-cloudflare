@@ -16,6 +16,7 @@
   - Production deployment remains a separate verification step where credentials are available.
 - **P1.2 — Product Normalization & Enrichment: DONE**
   - Reusable pure enrichment engine under `src/products/enrich.ts`.
+  - AliExpress DS product payloads now parse camelCase `evaluationCount` and `avgEvaluationRating` with snake_case fallback; regression coverage added and production verification confirmed persisted rating counts for affected products. Fix commit: `2941d3c`.
 - **P1.3 — Scoring Engine: DONE**
   - Deterministic scoring engine and quality signals under `src/scoring/`.
 - **P1.4 — Trend History Engine: DONE**
