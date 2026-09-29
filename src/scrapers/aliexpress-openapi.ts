@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { logInfo } from "../logging";
 import type { AliExpressParsedProduct, AliExpressPrice } from "./aliexpress-parser";
 import { ScraperError } from "./types";
 import { md5 } from "../utils/md5";
@@ -128,6 +129,7 @@ export function parseOpenApiPayload(body: string, hint: { url: URL; itemId: stri
 
   const root = methodResponse ?? envelopeRecord;
   const resultWrapper = asRecord(root?.["result"]);
+  logInfo("aliexpress.ds.product.get.rating", dsProductGetRatingDiagnostic(resultWrapper, hint.itemId));
   const productDetailModel = asRecord(resultWrapper?.["productDetailModel"]);
   if (productDetailModel) {
     return mapOpenApiResult(productDetailModel, hint);
@@ -136,6 +138,42 @@ export function parseOpenApiPayload(body: string, hint: { url: URL; itemId: stri
     return mapDsProductGetResult(resultWrapper, hint);
   }
   throw new ScraperError("NO_PRODUCT_DATA", "AliExpress Open Platform response carries no product payload");
+}
+
+/** Temporary diagnostic fields only. Never includes tokens, secrets, sign, or response body. */
+export function dsProductGetRatingDiagnostic(
+  result: Record<string, unknown> | undefined,
+  productId: string,
+): Record<string, unknown> {
+  const productDetailModel = asRecord(result?.["productDetailModel"]);
+  const baseInfo = asRecord(result?.["ae_item_base_info_dto"]);
+  const envelope = productDetailModel
+    ? "productDetailModel"
+    : baseInfo
+      ? "ae_item_base_info_dto"
+      : "none";
+
+  const evaluationCountPresent = Boolean(baseInfo && Object.prototype.hasOwnProperty.call(baseInfo, "evaluation_count"));
+  const avgPresent = Boolean(baseInfo && Object.prototype.hasOwnProperty.call(baseInfo, "avg_evaluation_rating"));
+  const evarating = asRecord(productDetailModel?.["evarating"]);
+  const evaratingPresent = Boolean(evarating);
+  const feedbackPresent = Boolean(evarating && Object.prototype.hasOwnProperty.call(evarating, "feedbackNum"));
+
+  return {
+    productId,
+    envelope,
+    hasEvaluationCount: evaluationCountPresent,
+    evaluationCount: evaluationCountPresent ? primitiveOrNull(baseInfo?.["evaluation_count"]) : null,
+    hasAvgEvaluationRating: avgPresent,
+    avgEvaluationRating: avgPresent ? primitiveOrNull(baseInfo?.["avg_evaluation_rating"]) : null,
+    hasEvarating: evaratingPresent,
+    feedbackNum: feedbackPresent ? primitiveOrNull(evarating?.["feedbackNum"]) : null,
+  };
+}
+
+function primitiveOrNull(value: unknown): string | number | boolean | null {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+  return null;
 }
 
 function isDsProductGetResult(value: Record<string, unknown> | undefined): value is Record<string, unknown> {

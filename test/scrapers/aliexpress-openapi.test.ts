@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  dsProductGetRatingDiagnostic,
   fetchAliExpressProductOpenApi,
   hasOpenApiCredentials,
   openApiSign,
@@ -212,6 +213,29 @@ describe("parseOpenApiPayload", () => {
     expect(parsed.brand).toBe("SoundCore");
     expect(parsed.attributes["Material"]).toBe("ABS");
     expect(parsed.rating).toEqual({ average: 4.5, count: 4 });
+  });
+
+  it("logs rating envelope metadata without the response body", () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    parseOpenApiPayload(successBody(), HINT);
+    const logged = spy.mock.calls
+      .map((call) => {
+        const raw = call[0];
+        return typeof raw === "string" ? (JSON.parse(raw) as Record<string, unknown>) : undefined;
+      })
+      .find((entry) => entry?.event === "aliexpress.ds.product.get.rating");
+    expect(logged).toMatchObject({
+      level: "info",
+      event: "aliexpress.ds.product.get.rating",
+      productId: ITEM_ID,
+      envelope: "productDetailModel",
+      hasEvarating: true,
+      feedbackNum: 4,
+    });
+    expect(logged).not.toHaveProperty("access_token");
+    expect(logged).not.toHaveProperty("sign");
+    expect(JSON.stringify(logged)).not.toContain("Portable Hair Straightener");
+    spy.mockRestore();
   });
 
   it("maps auth-style errors to PROVIDER_AUTH_ERROR", () => {
@@ -433,5 +457,65 @@ describe("fetchAliExpressProductOpenApi", () => {
       const typed = err as ScraperError;
       expect(typed.code).toBe("PROVIDER_HTTP_ERROR");
     }
+  });
+});
+
+describe("dsProductGetRatingDiagnostic", () => {
+  it("reports productDetailModel envelope and evarating feedbackNum", () => {
+    expect(
+      dsProductGetRatingDiagnostic(
+        {
+          productDetailModel: {
+            evarating: { evarating: 4.5, feedbackNum: 4 },
+          },
+        },
+        ITEM_ID,
+      ),
+    ).toEqual({
+      productId: ITEM_ID,
+      envelope: "productDetailModel",
+      hasEvaluationCount: false,
+      evaluationCount: null,
+      hasAvgEvaluationRating: false,
+      avgEvaluationRating: null,
+      hasEvarating: true,
+      feedbackNum: 4,
+    });
+  });
+
+  it("reports ae_item_base_info_dto envelope and evaluation fields", () => {
+    expect(
+      dsProductGetRatingDiagnostic(
+        {
+          ae_item_base_info_dto: {
+            avg_evaluation_rating: "4.6",
+            evaluation_count: "18",
+          },
+        },
+        ITEM_ID,
+      ),
+    ).toEqual({
+      productId: ITEM_ID,
+      envelope: "ae_item_base_info_dto",
+      hasEvaluationCount: true,
+      evaluationCount: "18",
+      hasAvgEvaluationRating: true,
+      avgEvaluationRating: "4.6",
+      hasEvarating: false,
+      feedbackNum: null,
+    });
+  });
+
+  it("reports none when no known envelope is present", () => {
+    expect(dsProductGetRatingDiagnostic({}, ITEM_ID)).toEqual({
+      productId: ITEM_ID,
+      envelope: "none",
+      hasEvaluationCount: false,
+      evaluationCount: null,
+      hasAvgEvaluationRating: false,
+      avgEvaluationRating: null,
+      hasEvarating: false,
+      feedbackNum: null,
+    });
   });
 });
